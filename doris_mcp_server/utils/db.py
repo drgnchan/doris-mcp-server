@@ -296,13 +296,17 @@ class DorisConnectionManager:
         
         # 🔧 FIX: Add connection acquisition lock to prevent race conditions
         self._connection_lock = asyncio.Lock()
-        self._recovery_lock = asyncio.Lock()
         
         # 🔧 FIX: Add connection acquisition queue to serialize requests
         self._connection_semaphore = asyncio.Semaphore(value=20)  # Max concurrent acquisitions
         
         # Database connection parameters from config.database
-        self.pool_recovery_lock = self._recovery_lock  # Compatibility alias
+        # FIX(#223): there must be exactly one recovery lock and it must not be
+        # aliased to another lock. asyncio.Lock is not reentrant, so aliasing
+        # _recovery_lock and pool_recovery_lock to the same object makes
+        # _recover_pool() wait forever on a lock already held by its caller
+        # _recover_pool_with_lock(), deadlocking every pool recovery attempt.
+        self.pool_recovery_lock = asyncio.Lock()
         self._update_db_params_from_config(self.active_db_config)
         self.connect_timeout = config.database.connection_timeout
         
@@ -1365,10 +1369,15 @@ class DorisConnectionManager:
                 self.pool_recovering = False
     
     async def _recover_pool_with_lock(self):
-        """🔧 FIX: Recovery method that uses the new recovery lock to prevent races"""
-        async with self._recovery_lock:
-            if not self.pool_recovering:  # Only recover if not already in progress
-                await self._recover_pool()
+        """Run pool recovery without nested acquisition of the recovery lock.
+
+        FIX(#223): _recover_pool() is the single owner of pool_recovery_lock.
+        This method used to acquire _recovery_lock and then call
+        _recover_pool(), which acquires pool_recovery_lock. Both names were
+        aliased to the same non-reentrant asyncio.Lock, so recovery hung
+        forever and every query ended in a tool-level timeout.
+        """
+        await self._recover_pool()
 
     async def get_connection(self, session_id: str) -> DorisConnection:
         """🔧 FIX: Simplified connection acquisition without double locking

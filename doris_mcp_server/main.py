@@ -530,7 +530,27 @@ class DorisServer:
             
             # Health check endpoint
             async def health_check(request):
-                return JSONResponse({"status": "healthy", "service": "doris-mcp-server"})
+                # FIX(#223): report global connection pool state. HTTP liveness
+                # alone cannot detect a missing or closed pool, which is how the
+                # recovery deadlock left the container "healthy" while every
+                # query timed out. Status stays 200 so the Docker HEALTHCHECK
+                # (curl -f) keeps working.
+                try:
+                    pool = self.connection_manager.pool
+                    if pool is None:
+                        pool_state = "unavailable"
+                    elif getattr(pool, "closed", False):
+                        pool_state = "closed"
+                    else:
+                        pool_state = "available"
+                except Exception as exc:  # pragma: no cover - defensive
+                    self.logger.warning(f"Health check could not read pool state: {exc}")
+                    pool_state = "unknown"
+                return JSONResponse({
+                    "status": "healthy",
+                    "service": "doris-mcp-server",
+                    "database_pool": pool_state,
+                })
             
             # OAuth endpoints
             from .auth.oauth_handlers import OAuthHandlers
