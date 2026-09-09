@@ -1,6 +1,7 @@
 **/.venv
 **/venv
-# Never bake runtime secrets into the image (compose mounts ./.env at runtime)
+# Never bake runtime secrets or VCS metadata into the image
 .env
 .env.*
 !.env.example
+.git
