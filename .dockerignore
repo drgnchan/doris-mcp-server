@@ -1,2 +1,6 @@
 **/.venv
 **/venv
+# Never bake runtime secrets into the image (compose mounts ./.env at runtime)
+.env
+.env.*
+!.env.example
