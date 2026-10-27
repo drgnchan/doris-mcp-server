@@ -47,6 +47,7 @@ under the License.
 
 ## 能力
 
+- [直接权限管理](capabilities/administration.zh-CN.md)——默认关闭、鉴权后直接执行，无审批流程。
 - [工具领域](capabilities/tool-domains.zh-CN.md)——8 领域 / 55 Child 合同。
 - [能力可用性](capabilities/availability.zh-CN.md)——版本解析、Probe、Provider、
   权限、Manifest 和 Fail Closed 行为。

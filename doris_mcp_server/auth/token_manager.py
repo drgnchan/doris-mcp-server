@@ -81,6 +81,7 @@ class TokenInfo:
     description: str = ""  # Optional description for token purpose
     is_active: bool = True
     database_config: DatabaseConfig | None = None  # Optional database binding
+    admin_actions: tuple[str, ...] = ()  # Explicit file-only delegation; never implicit
 
 
 @dataclass
@@ -353,8 +354,16 @@ class TokenManager:
                 )
 
             # Create token info
+            from ..tools.admin_statements import ACTION_FIELDS
+
+            admin_actions = token_config.get("admin_actions", [])
+            if not isinstance(admin_actions, list) or any(
+                not isinstance(action, str) or action not in ACTION_FIELDS for action in admin_actions
+            ):
+                raise ValueError("Static token admin_actions must contain known action names")
             token_info = TokenInfo(
                 token_id=token_id,
+                admin_actions=tuple(dict.fromkeys(admin_actions)),
                 created_at=created_at,
                 expires_at=expires_at,
                 last_used=last_used,
@@ -1001,6 +1010,9 @@ class TokenManager:
             "description": token_info.description,
             "is_active": token_info.is_active
         }
+
+        if token_info.admin_actions:
+            token_config["admin_actions"] = list(token_info.admin_actions)
 
         # Add database config if present
         if token_info.database_config:

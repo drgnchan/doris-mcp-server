@@ -199,14 +199,11 @@ def test_annotations_reject_conflicting_risk_flags() -> None:
             requires_confirmation=True,
         )
 
-    with pytest.raises(ValidationError, match="must require confirmation"):
-        ToolContractAnnotations(
-            read_only=False,
-            idempotent=False,
-            destructive=True,
-            open_world=False,
-            requires_confirmation=False,
-        )
+    direct = ToolContractAnnotations(
+        read_only=False, idempotent=False, destructive=True,
+        open_world=False, requires_confirmation=False,
+    )
+    assert direct.destructive and not direct.requires_confirmation
 
 
 def test_capability_variant_requires_evidence_contract() -> None:

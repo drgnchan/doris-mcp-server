@@ -391,6 +391,13 @@ def authorize_operation(auth_context: Any | None, operation: str) -> None:
     Static token, JWT, anonymous, and local stdio paths retain their existing
     authorization behavior outside this OAuth scope policy.
     """
+    if operation == "tool:doris_admin":
+        from ..tools.admin_domain import allowed_actions
+        from ..tools.admin_statements import CHILD_ACTIONS
+
+        if not any(allowed_actions(auth_context, child) for child in CHILD_ACTIONS):
+            raise OperationAuthorizationError("Administration action permission required", operation=operation)
+        return
     if auth_context is None:
         return
 

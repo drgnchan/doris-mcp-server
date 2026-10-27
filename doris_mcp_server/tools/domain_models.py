@@ -163,8 +163,8 @@ class ToolContractAnnotations(ContractModel):
     def _validate_risk_contract(self) -> Self:
         if self.read_only and self.destructive:
             raise ValueError("a tool cannot be both read-only and destructive")
-        if self.destructive and not self.requires_confirmation:
-            raise ValueError("destructive tools must require confirmation")
+        # Side effects and server-side confirmation are independent contracts.
+        # The opt-in Admin domain uses authenticated direct execution.
         return self
 
 

@@ -887,11 +887,20 @@ class AuthenticationProvider:
                     token, token_info
                 )
 
+            from ..tools.admin_statements import CHILD_ACTIONS, action_scope
+
+            admin_actions = getattr(token_info, "admin_actions", ())
+            admin_permissions = [action_scope(action) for action in admin_actions]
+            admin_permissions.extend(
+                f"child:call:doris_admin:{child}"
+                for child, actions in CHILD_ACTIONS.items()
+                if any(action in actions for action in admin_actions)
+            )
             return AuthContext(
                 token_id=token_info.token_id,
                 user_id=token_info.token_id,  # Use token_id as user_id for token auth
                 roles=["token_user"],  # Default role for token users
-                permissions=["read", "write"],  # Default permissions for token users
+                permissions=["read", "write", *admin_permissions],
                 security_level=SecurityLevel.INTERNAL,
                 client_ip=credentials.client_ip,
                 session_id=credentials.session_id or f"session_{token_info.token_id}",

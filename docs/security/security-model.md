@@ -140,7 +140,10 @@ for grants, row policies, and token-bound examples.
 
 ## SQL and identifier safety
 
-The built-in 1.0 domains are read-only. `doris_admin` is not registered.
+The original eight domains remain read-only. Optional `doris_admin` is disabled
+by default and uses a separate structured, exactly authorized management sink.
+It executes directly without approval; no existing query sink becomes writable.
+See [administration](../capabilities/administration.md).
 
 The shared query guard:
 

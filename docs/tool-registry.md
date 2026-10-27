@@ -123,3 +123,19 @@
 | `get_adbc_connection_info` | `_get_adbc_connection_info_tool` | `doris_query.get_adbc_connection_info` | `atomic` | - |
 
 This document describes internal 1.0 routing contracts. The pre-1.0 flat names are migration inputs, not registered 1.0 tool aliases.
+
+## Optional direct administration
+
+Disabled by default. Explicit enablement adds seven children (9/62 total).
+No approval workflow; exact action authorization and native Doris RBAC apply.
+See [administration](capabilities/administration.md) for configuration and limits.
+
+| Child | Actions |
+|---|---|
+| `doris_admin.manage_privileges` | `grant_privileges`, `revoke_privileges` |
+| `doris_admin.manage_role_membership` | `grant_roles`, `revoke_roles` |
+| `doris_admin.manage_roles` | `create_role`, `drop_role`, `alter_role` |
+| `doris_admin.manage_users` | `create_user`, `drop_user`, `alter_user`, `set_password`, `set_property` |
+| `doris_admin.manage_row_policies` | `create_row_policy`, `drop_row_policy` |
+| `doris_admin.inspect_access` | `show_grants`, `show_all_grants`, `show_roles`, `show_privileges`, `show_property`, `show_all_properties`, `show_row_policy` |
+| `doris_admin.get_execution_status` | `get_execution_status` |

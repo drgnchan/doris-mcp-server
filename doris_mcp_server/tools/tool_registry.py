@@ -388,6 +388,8 @@ class ToolDefinitionRegistry:
 
 def policy_definition_for_tool(name: str) -> ToolPolicyDefinition | None:
     """Return policy metadata for a registered canonical tool or legacy alias."""
+    if name == "doris_admin":
+        return ToolPolicyDefinition("domain", "management", "high")
     if (
         _is_read_only_domain_tool(name)
         or name in DORIS_OAUTH_METADATA_TOOL_SET

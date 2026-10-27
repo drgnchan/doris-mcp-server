@@ -91,9 +91,10 @@ All FE/BE destinations are operator configuration, never caller arguments.
 | `MCP_TOOL_EXPOSURE_MODE` | `hierarchical` (default) or `flat` |
 | `ALLOW_UNAUTHENTICATED_NON_LOOPBACK` | dangerous test-only bind override |
 
-`MCP_ADMIN_DOMAIN_ENABLED` must remain `false` and
-`MCP_ADMIN_REQUIRE_CONFIRMATION` must remain `true`. 1.0 rejects an attempt to
-enable the reserved administration domain.
+`MCP_ADMIN_DOMAIN_ENABLED` defaults to `false`. Direct administration requires
+a private `MCP_ADMIN_STATE_PATH`, exact action permissions and one active worker.
+Password operations additionally use `MCP_ADMIN_PASSWORD_FILE`. There is no
+approval/confirmation setting. See [administration](../capabilities/administration.md).
 
 ## Query, response, and concurrency limits
 

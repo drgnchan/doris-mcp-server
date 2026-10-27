@@ -15,21 +15,27 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""Fail-closed contracts reserved for a future Doris administration domain."""
+"""Opt-in, authenticated direct access management. No approval protocol."""
 
 from __future__ import annotations
 
-from enum import StrEnum
-from typing import Annotated, Any, Literal, Self
+from typing import Any
 
-from pydantic import Field, model_validator
-
+from .admin_statements import (
+    CHILD_ACTIONS,
+    AdminError,
+    action_scope,
+    child_schema,
+)
 from .domain_models import (
-    BindingName,
-    ContractModel,
-    Identifier,
-    NonEmptyText,
+    Availability,
+    AvailabilityStatus,
+    CapabilityVariant,
+    ChildSupportContract,
+    ChildToolDefinition,
+    DomainDefinition,
     ToolContractAnnotations,
+    UnavailableBehavior,
 )
 
 ADMIN_DOMAIN_NAME = "doris_admin"
@@ -39,148 +45,189 @@ ADMIN_ACTION_ANNOTATIONS = ToolContractAnnotations(
     idempotent=False,
     destructive=True,
     open_world=False,
-    requires_confirmation=True,
+    requires_confirmation=False,
+)
+_READ = ToolContractAnnotations(
+    read_only=True,
+    idempotent=True,
+    destructive=False,
+    open_world=False,
+    requires_confirmation=False,
 )
 
 
-class AdminRiskLevel(StrEnum):
-    """Allowed risk classifications for a future administrative action."""
-
-    HIGH = "high"
-    CRITICAL = "critical"
-
-
-class AdminConfirmationContract(ContractModel):
-    """Single-use confirmation bound to a preview and exact arguments."""
-
-    required: Literal[True] = True
-    method: Literal["explicit_token"] = "explicit_token"
-    token_field: Identifier = "confirmation_token"
-    preview_revision_field: Identifier = "preview_revision"
-    argument_digest_algorithm: Literal["sha256"] = "sha256"
-    single_use: Literal[True] = True
-    expires_seconds: Annotated[int, Field(ge=30, le=900)] = 300
+def principal_key(context: Any) -> str:
+    if context is None or getattr(context, "auth_method", "") not in {
+        "token",
+        "jwt",
+        "external_oauth",
+        "doris_oauth",
+    }:
+        raise AdminError("ADMIN_AUTHENTICATION_REQUIRED")
+    user = getattr(context, "user_id", "") or getattr(context, "doris_user", "")
+    if not isinstance(user, str) or not user:
+        raise AdminError("ADMIN_AUTHENTICATION_REQUIRED")
+    # Issuer prevents collisions between federated identities. Never use bearer text.
+    return f"{context.auth_method}:{getattr(context, 'oauth_issuer', '')}:{user}"
 
 
-class AdminActionContract(ContractModel):
-    """Future preview/execute boundary; this release registers no actions."""
-
-    name: Identifier
-    title: NonEmptyText
-    description: NonEmptyText
-    risk_level: AdminRiskLevel
-    preview_scope: BindingName
-    execute_scope: BindingName
-    preview_handler_name: BindingName
-    execute_handler_name: BindingName
-    confirmation: AdminConfirmationContract = Field(
-        default_factory=AdminConfirmationContract
+def allowed_actions(context: Any, child: str) -> tuple[str, ...]:
+    try:
+        principal_key(context)
+    except AdminError:
+        return ()
+    scopes = set(
+        getattr(context, "oauth_scopes", ())
+        if context.auth_method in {"external_oauth", "doris_oauth"}
+        else getattr(context, "permissions", ())
     )
-    idempotency_key_field: Identifier = "idempotency_key"
-    rollback_supported: bool = False
-    rollback_scope: BindingName | None = None
-    rollback_handler_name: BindingName | None = None
-    annotations: ToolContractAnnotations = ADMIN_ACTION_ANNOTATIONS
-
-    @model_validator(mode="after")
-    def _validate_action_boundary(self) -> Self:
-        expected_values = {
-            "preview_scope": f"child:preview:{ADMIN_DOMAIN_NAME}:{self.name}",
-            "execute_scope": f"child:call:{ADMIN_DOMAIN_NAME}:{self.name}",
-            "preview_handler_name": f"admin:preview:{self.name}",
-            "execute_handler_name": f"admin:execute:{self.name}",
-        }
-        for field_name, expected in expected_values.items():
-            if getattr(self, field_name) != expected:
-                raise ValueError(f"{field_name} must be {expected!r}")
-        if self.annotations != ADMIN_ACTION_ANNOTATIONS:
-            raise ValueError(
-                "administrative actions must be destructive, closed-world, "
-                "non-read-only, and confirmation-required"
-            )
-
-        rollback_values = (
-            self.rollback_scope,
-            self.rollback_handler_name,
-        )
-        if self.rollback_supported:
-            expected_rollback = (
-                f"child:rollback:{ADMIN_DOMAIN_NAME}:{self.name}",
-                f"admin:rollback:{self.name}",
-            )
-            if rollback_values != expected_rollback:
-                raise ValueError(
-                    "rollback-enabled actions require canonical rollback "
-                    "scope and handler bindings"
-                )
-        elif any(value is not None for value in rollback_values):
-            raise ValueError(
-                "rollback scope and handler require rollback_supported=true"
-            )
-        return self
+    if f"child:call:doris_admin:{child}" not in scopes:
+        return ()
+    if context.auth_method == "doris_oauth" and (
+        not getattr(context, "doris_oauth_child_tools_enabled", False)
+        or f"doris_admin.{child}"
+        not in getattr(context, "doris_oauth_child_tool_allowlist", ())
+    ):
+        return ()
+    return tuple(a for a in CHILD_ACTIONS[child] if action_scope(a) in scopes)
 
 
-class AdminDomainReservation(ContractModel):
-    """Versioned reservation that cannot expose actions in the 1.0 release."""
+def authorize_admin(context: Any, action: str) -> str:
+    principal = principal_key(context)
+    child = next((c for c, actions in CHILD_ACTIONS.items() if action in actions), None)
+    if child is None or action not in allowed_actions(context, child):
+        raise AdminError("ADMIN_ACTION_FORBIDDEN")
+    return principal
 
-    name: Identifier = ADMIN_DOMAIN_NAME
-    title: NonEmptyText = "Doris Administration"
-    description: NonEmptyText = (
-        "Reserved boundary for separately reviewed Doris-changing actions."
+
+def filtered_child(child: ChildToolDefinition, context: Any) -> ChildToolDefinition:
+    actions = allowed_actions(context, child.name)
+    return (
+        child.model_copy(update={"input_schema": child_schema(child.name, actions)})
+        if actions
+        else child
     )
-    status: Literal["reserved"] = "reserved"
-    enabled: Literal[False] = False
-    discovery_scope: BindingName = ADMIN_DOMAIN_DISCOVERY_SCOPE
-    require_confirmation: Literal[True] = True
-    actions: tuple[AdminActionContract, ...] = ()
-
-    @model_validator(mode="after")
-    def _validate_release_reservation(self) -> Self:
-        if self.name != ADMIN_DOMAIN_NAME:
-            raise ValueError(f"administration domain name must be {ADMIN_DOMAIN_NAME!r}")
-        if self.discovery_scope != ADMIN_DOMAIN_DISCOVERY_SCOPE:
-            raise ValueError(
-                "administration discovery scope must use the reserved domain scope"
-            )
-        if self.actions:
-            raise ValueError(
-                "the Doris MCP 1.0 administration reservation cannot register actions"
-            )
-        return self
 
 
 def administration_config_errors(
-    *,
-    enabled: Any,
-    require_confirmation: Any,
+    *, enabled: Any, state_path: Any = "", password_file: Any = ""
 ) -> tuple[str, ...]:
-    """Return fail-closed runtime errors for the 1.0 reservation."""
-    errors: list[str] = []
+    errors = []
     if not isinstance(enabled, bool):
-        errors.append("Administration domain enabled flag must be boolean")
-    elif enabled:
-        errors.append(
-            "Administration domain is reserved and cannot be enabled in 1.0"
-        )
-    if not isinstance(require_confirmation, bool):
-        errors.append("Administration confirmation flag must be boolean")
-    elif not require_confirmation:
-        errors.append(
-            "Administration domain confirmation requirement cannot be disabled"
-        )
+        errors.append("Administration enabled flag must be boolean")
+    if not isinstance(state_path, str) or (enabled and not state_path.strip()):
+        errors.append("Administration state_path is required when enabled")
+    if not isinstance(password_file, str):
+        errors.append("Administration password_file must be a path string")
     return tuple(errors)
 
 
-DORIS_ADMIN_DOMAIN_RESERVATION = AdminDomainReservation()
+def _child(name: str) -> ChildToolDefinition:
+    return ChildToolDefinition(
+        name=name,
+        title=name.replace("_", " ").title(),
+        canonical_description=(
+            "Authenticated Doris access management. One structured operation per call; "
+            "dry_run is optional, approval is not required. Reuse the same idempotency_key "
+            "after response loss. SQL success does not prove effective access."
+            if name.startswith("manage_")
+            else "Inspect bounded access metadata or your own durable execution result."
+        ),
+        input_schema=child_schema(name),
+        output_schema={
+            "type": "object",
+            "properties": {
+                "action": {"type": "string"},
+                "execution_status": {"type": "string"},
+                "verification_status": {"type": "string"},
+                "warnings": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": [
+                "action",
+                "execution_status",
+                "verification_status",
+                "warnings",
+            ],
+            "additionalProperties": True,
+        },
+        handler_name=f"child:doris_admin:{name}",
+        authorization_policy=f"child:call:doris_admin:{name}",
+        annotations=_READ
+        if name in {"inspect_access", "get_execution_status"}
+        else ADMIN_ACTION_ANNOTATIONS,
+        support_contract=ChildSupportContract(
+            rule_id=f"doris_admin.{name}",
+            variants=(
+                CapabilityVariant(
+                    name="native_management",
+                    supported_ranges=(">=3.0.0,<4.0.0",),
+                    source_references=(
+                        "https://doris.apache.org/docs/3.x/sql-manual/sql-statements/account-management/",
+                    ),
+                    callable_when_degraded=True,
+                ),
+            ),
+            unavailable_behavior=UnavailableBehavior.SHOW_DISABLED,
+        ),
+    )
 
-__all__ = [
-    "ADMIN_ACTION_ANNOTATIONS",
-    "ADMIN_DOMAIN_DISCOVERY_SCOPE",
-    "ADMIN_DOMAIN_NAME",
-    "AdminActionContract",
-    "AdminConfirmationContract",
-    "AdminDomainReservation",
-    "AdminRiskLevel",
-    "DORIS_ADMIN_DOMAIN_RESERVATION",
-    "administration_config_errors",
-]
+
+ADMIN_DOMAIN = DomainDefinition(
+    name=ADMIN_DOMAIN_NAME,
+    title="Doris Administration",
+    description="Opt-in access management using the authenticated caller's Doris route. Direct execution, no approval workflow.",
+    annotations=ADMIN_ACTION_ANNOTATIONS,
+    children=tuple(_child(name) for name in CHILD_ACTIONS),
+    enablement_policy="config:administration:enabled",
+    discovery_policy=ADMIN_DOMAIN_DISCOVERY_SCOPE,
+)
+
+
+class AdminAvailabilityProvider:
+    """Keep the read-only capability matrix/certification completely separate."""
+
+    def __init__(self, delegate: Any) -> None:
+        self.delegate = delegate
+
+    async def availability_for(
+        self, domain: DomainDefinition, child: ChildToolDefinition, auth_context: Any
+    ) -> Availability:
+        if domain.name != ADMIN_DOMAIN_NAME:
+            result: Availability = await self.delegate.availability_for(
+                domain, child, auth_context
+            )
+            return result
+        permitted = bool(allowed_actions(auth_context, child.name))
+        return Availability(
+            status=AvailabilityStatus.DEGRADED
+            if permitted
+            else AvailabilityStatus.UNKNOWN,
+            callable=permitted,
+            reason_code="ADMIN_NATIVE_RBAC" if permitted else "ADMIN_ACTION_FORBIDDEN",
+            active_variant="native_management" if permitted else None,
+            evidence_sources=("explicit_configuration", "action_authorization"),
+            limitations=(
+                "Doris 3.x native RBAC is authoritative; target patch and Cloud combinations are not certified by the read-only matrix.",
+            ),
+        )
+
+    async def resolve_domain(
+        self,
+        domain: DomainDefinition,
+        children: tuple[ChildToolDefinition, ...],
+        auth_context: Any,
+    ) -> Any:
+        from .domain_manifest import DomainAvailabilityResolution
+
+        resolver = getattr(self.delegate, "resolve_domain", None)
+        if domain.name != ADMIN_DOMAIN_NAME and callable(resolver):
+            return await resolver(domain, children, auth_context)
+        return DomainAvailabilityResolution(
+            availabilities={
+                child.name: await self.availability_for(domain, child, auth_context)
+                for child in children
+            },
+            generation_fingerprint="admin-direct-v1"
+            if domain.name == ADMIN_DOMAIN_NAME
+            else "",
+        )

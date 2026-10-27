@@ -72,7 +72,8 @@ uv run python generate_tool_catalog.py --check
 新增或修改 Child 前：
 
 1. 确认操作属于现有领域。新顶级领域会改变稳定 Host 合同，需要架构 Review。
-2. 内置操作保持只读。
+2. 原有 8/55 保持只读。管理操作仅进入默认关闭、独立鉴权的 Admin 执行入口，
+   不能放宽查询 Guard。
 3. 定义唯一 Feature ID、Child Name、Title、Canonical Description、Input/Output
    Schema、Annotation、Authorization Policy、Version Range、Variant 与
    Probe/Provider。
@@ -142,7 +143,10 @@ Coverage Gate 除全仓下限外，还包括 Protocol、Authentication 和 Core 
 - Row/Byte/Timeout 上限与 Cancellation Recovery；
 - Doris Permission Denial 和 Secret-safe Error。
 
-不能把破坏性或未审查测试指向共享集群。
+不能把破坏性或未审查测试指向共享集群。独立的
+`test/integration/test_admin_doris.py` 是管理写入的显式例外：必须设置
+`DORIS_ADMIN_E2E=1`，仅使用回环地址的临时 Docker Doris、随机对象名和清理逻辑，
+不得使用共享只读测试集群。
 
 ### MCP Conformance
 

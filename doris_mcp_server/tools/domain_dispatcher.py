@@ -52,6 +52,7 @@ from ..utils.pipeline_runtime import PipelineRuntimeFailure
 from ..utils.query_runtime import QueryRuntimeFailure
 from ..utils.search_runtime import SearchRuntimeFailure
 from . import domain_catalog as domain_catalog_module
+from .admin_statements import AdminError
 from .domain_catalog import (
     DorisDomainCatalog,
     LegacyMigrationMode,
@@ -359,6 +360,10 @@ class DomainDispatcher:
                 manifest_child = children_by_name.get(child.name)
                 if manifest_child is None:
                     continue
+                if domain.name == "doris_admin":
+                    from .admin_domain import filtered_child
+
+                    child = filtered_child(child, auth_context)
                 annotations = child.annotations
                 tools.append(
                     Tool(
@@ -790,6 +795,12 @@ class DomainDispatcher:
                     "reason_code": exc.reason_code,
                     "status_code": exc.status_code,
                 },
+            )
+        except AdminError as exc:
+            return self._error(
+                domain.name, DomainErrorCode.CHILD_EXECUTION_FAILED, exc.code,
+                child_tool=child.name, manifest_version=manifest.manifest_version,
+                retryable=False, details={"reason_code": exc.code, "rediscover": False},
             )
         except ToolOutputValidationError:
             logger.exception("Formal child output validation failed for %s", feature_id)

@@ -27,6 +27,13 @@ under **Unreleased** until a new version is selected and published.
 
 ### Added
 
+- Added default-off `doris_admin` direct access management: all 14 privilege,
+  role, user and row-policy operation families plus bounded inspection. No
+  approval workflow or arbitrary SQL; the original 8/55 surface stays read-only.
+- Added explicit static-token `admin_actions` and OAuth action scopes, private
+  password references, single-active durable request deduplication, and local
+  Doris HTTP acceptance coverage. See [administration](docs/capabilities/administration.md).
+
 - Added an explicit Dify 1.16.1 compatibility profile for MCP `2025-06-18`
   through the default-off `/mcp/legacy` endpoint, with initialize, stateless
   tool-discovery, and tool-call regression coverage.

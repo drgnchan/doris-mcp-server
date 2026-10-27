@@ -256,6 +256,10 @@ def authorized_child_discovery(
     child: ChildToolDefinition,
 ) -> bool:
     """Require exact OAuth discovery grants and preserve local compatibility."""
+    if domain.name == "doris_admin":
+        from .admin_domain import allowed_actions
+
+        return bool(allowed_actions(auth_context, child.name))
     if auth_context is None:
         return True
 
@@ -287,6 +291,7 @@ def authorized_child_discovery(
         value
         for value in controls
         if value.startswith(("child:call:", "child:discover:"))
+        and (is_oauth or ":doris_admin:" not in value)
     }
     if not is_oauth and not child_controls:
         return True
@@ -332,6 +337,10 @@ def authorized_child_execution(
     child: ChildToolDefinition,
 ) -> bool:
     """Require an exact child call grant on OAuth execution paths."""
+    if domain.name == "doris_admin":
+        from .admin_domain import allowed_actions
+
+        return bool(allowed_actions(auth_context, child.name))
     if auth_context is None:
         return True
 
@@ -394,6 +403,7 @@ def authorized_child_execution(
         value
         for value in controls
         if value.startswith(("child:call:", "child:discover:"))
+        and ":doris_admin:" not in value
     }
     return not child_controls
 
@@ -507,6 +517,10 @@ class DomainManifestService:
             for child in domain.children
             if self._discovery_policy(auth_context, domain, child)
         )
+        if domain.name == "doris_admin":
+            from .admin_domain import filtered_child
+
+            authorized_children = tuple(filtered_child(c, auth_context) for c in authorized_children)
         batch_resolver = getattr(
             self._availability_provider,
             "resolve_domain",
@@ -635,7 +649,7 @@ def _build_top_level_tool(domain: DomainDefinition) -> Tool:
         title=domain.title,
         description=domain.description + DOMAIN_DISCOVERY_DESCRIPTION_SUFFIX,
         input_schema=DOMAIN_TOOL_INPUT_SCHEMA,
-        output_schema=DOMAIN_TOOL_OUTPUT_SCHEMA,
+        output_schema=({"type": "object"} if domain.name == "doris_admin" else DOMAIN_TOOL_OUTPUT_SCHEMA),
         annotations=ToolAnnotations(
             title=domain.title,
             read_only_hint=annotations.read_only,

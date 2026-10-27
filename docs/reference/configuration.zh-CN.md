@@ -88,8 +88,9 @@ HTTP 安全：
 | `MCP_TOOL_EXPOSURE_MODE` | `hierarchical`（默认）或 `flat` |
 | `ALLOW_UNAUTHENTICATED_NON_LOOPBACK` | 危险且只供测试的绑定绕过 |
 
-`MCP_ADMIN_DOMAIN_ENABLED` 必须为 `false`，
-`MCP_ADMIN_REQUIRE_CONFIRMATION` 必须为 `true`。1.0 会拒绝启用预留管理领域。
+`MCP_ADMIN_DOMAIN_ENABLED` 默认 `false`。启用直接管理需要受保护的
+`MCP_ADMIN_STATE_PATH`、精确动作权限和一个活动 Worker；密码操作还使用
+`MCP_ADMIN_PASSWORD_FILE`。没有审批/确认配置，详见[权限管理](../capabilities/administration.zh-CN.md)。
 
 ## Query、Response 与并发上限
 

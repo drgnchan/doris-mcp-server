@@ -29,6 +29,7 @@ from mcp.types import Tool
 from ..auth.operation_policy import authorize_operation
 from ..state_handles import StateHandleCodec
 from ..utils.adbc_query_tools import DorisADBCQueryTools
+from ..utils.admin_runtime import AdminRuntime
 from ..utils.analysis_tools import SQLAnalyzer, TableAnalyzer
 from ..utils.data_exploration_tools import DataExplorationTools
 from ..utils.data_governance_tools import DataGovernanceTools
@@ -41,6 +42,8 @@ from ..utils.query_executor import DorisQueryExecutor
 from ..utils.schema_extractor import MetadataExtractor
 from ..utils.security import get_current_auth_context
 from ..utils.security_analytics_tools import SecurityAnalyticsTools
+from .admin_domain import ADMIN_DOMAIN, AdminAvailabilityProvider
+from .admin_handlers import AdminToolHandlersMixin
 from .capability_detector import DorisCapabilityDetector
 from .capability_registry import (
     CapabilityEvaluator,
@@ -49,7 +52,10 @@ from .capability_registry import (
 )
 from .catalog_handlers import CatalogToolHandlersMixin
 from .cluster_handlers import ClusterToolHandlersMixin
-from .domain_catalog import CURRENT_FLAT_TOOL_NAMES
+from .domain_catalog import (
+    CURRENT_FLAT_TOOL_NAMES,
+    DorisDomainCatalog,
+)
 from .domain_dispatcher import (
     BoundHandlerAvailabilityProvider,
     DomainDispatcher,
@@ -77,6 +83,7 @@ logger = get_logger(__name__)
 
 
 class DorisToolsManager(
+    AdminToolHandlersMixin,
     QueryToolHandlersMixin,
     CatalogToolHandlersMixin,
     ClusterToolHandlersMixin,
@@ -99,6 +106,15 @@ class DorisToolsManager(
     ) -> None:
         self.connection_manager = connection_manager
         config = getattr(connection_manager, "config", None)
+        from . import domain_catalog as catalog_module
+
+        baseline = catalog_module.DORIS_DOMAIN_CATALOG
+        admin_enabled = getattr(getattr(config, "administration", None), "enabled", False) is True
+        self.admin_runtime = AdminRuntime(connection_manager) if admin_enabled else None
+        catalog = DorisDomainCatalog(
+            domains=(*baseline.domains, ADMIN_DOMAIN),
+            legacy_migrations=baseline.legacy_migrations,
+        ) if admin_enabled else baseline
         self._tool_provider_runtime = ToolProviderRuntime.create(config, tool_providers)
         self.query_executor = DorisQueryExecutor(connection_manager)
         self.table_analyzer = TableAnalyzer(connection_manager)
@@ -184,7 +200,10 @@ class DorisToolsManager(
                 ),
             )
             domain_availability_provider = self._capability_registry
+        if admin_enabled:
+            domain_availability_provider = AdminAvailabilityProvider(domain_availability_provider)
         self._domain_manifest_service = DomainManifestService(
+            catalog=catalog,
             availability_provider=domain_availability_provider,
         )
         configured_mode = getattr(
@@ -216,6 +235,7 @@ class DorisToolsManager(
         self._domain_dispatcher = DomainDispatcher(
             self,
             self._domain_manifest_service,
+            catalog=catalog,
             state_handle_codec=StateHandleCodec(
                 state_handle_secret,
                 default_ttl_seconds=state_handle_ttl,
@@ -235,13 +255,19 @@ class DorisToolsManager(
         """Start runtime resources owned by the tools manager."""
         await self.query_executor.start()
         try:
+            if self.admin_runtime is not None:
+                self.admin_runtime.start()
             await self._tool_provider_runtime.start()
         except Exception:
+            if self.admin_runtime is not None:
+                self.admin_runtime.close()
             await self.query_executor.close()
             raise
 
     async def close(self) -> None:
         """Stop runtime resources owned by the tools manager."""
+        if self.admin_runtime is not None:
+            self.admin_runtime.close()
         if self._capability_registry is not None:
             await self._capability_registry.close()
         await self._tool_provider_runtime.close()

@@ -193,6 +193,12 @@ class DorisDomainCatalog(ContractModel):
             domain.name: tuple(child.name for child in domain.children)
             for domain in self.domains
         }
+        from .admin_domain import ADMIN_DOMAIN
+
+        if ADMIN_DOMAIN.name in actual:
+            expected[ADMIN_DOMAIN.name] = tuple(c.name for c in ADMIN_DOMAIN.children)
+            if self.resolve_domain(ADMIN_DOMAIN.name) != ADMIN_DOMAIN:
+                raise DomainCatalogError("administration contract must match its exact registry")
         if actual != expected:
             raise DomainCatalogError(
                 "domain catalog must contain the exact ordered "
@@ -217,6 +223,8 @@ class DorisDomainCatalog(ContractModel):
             for feature in DORIS_FEATURE_MATRIX.features
         }
         for domain in self.domains:
+            if domain.name == ADMIN_DOMAIN.name:
+                continue  # Exact independent Admin contract checked above.
             if not domain.annotations.read_only:
                 raise DomainCatalogError(
                     f"read-only domain {domain.name!r} is not marked read-only"
@@ -422,6 +430,20 @@ class DorisDomainCatalog(ContractModel):
                 "",
             ]
         )
+        if "doris_admin" not in {domain.name for domain in self.domains}:
+            from .admin_statements import CHILD_ACTIONS
+
+            lines.extend([
+                "## Optional direct administration", "",
+                "Disabled by default. Explicit enablement adds seven children (9/62 total).",
+                "No approval workflow; exact action authorization and native Doris RBAC apply.",
+                "See [administration](capabilities/administration.md) for configuration and limits.", "",
+                "| Child | Actions |", "|---|---|",
+            ])
+            for child_name, actions in CHILD_ACTIONS.items():
+                rendered_actions = ", ".join(f"`{action}`" for action in actions)
+                lines.append(f"| `doris_admin.{child_name}` | {rendered_actions} |")
+            lines.append("")
         return ASF_MARKDOWN_HEADER + "\n".join(lines)
 
 

@@ -204,6 +204,83 @@ class DorisConnection:
         self.owner_pool = owner_pool
         self.logger = get_logger(__name__)
 
+    async def execute_management(
+        self,
+        child: str,
+        arguments: dict[str, Any],
+        auth_context: AuthContext,
+        *,
+        password: str | None = None,
+    ) -> dict[str, Any]:
+        """Dedicated sink: recompile structured actions, reauthorize, never retry.
+
+        This deliberately does not call execute(), loosen its read-only guard,
+        or accept an SQL string. Driver diagnostics are stripped at this boundary.
+        """
+        import json
+
+        from pymysql import MySQLError
+
+        from ..tools.admin_domain import authorize_admin
+        from ..tools.admin_statements import (
+            BIND_MARKER,
+            AdminError,
+            compile_statement,
+        )
+
+        statement = compile_statement(child, arguments)
+        authorize_admin(auth_context, statement.action)
+        for action in statement.extra_actions:
+            authorize_admin(auth_context, action)
+        if arguments.get("dry_run") or statement.action == "get_execution_status":
+            raise AdminError("ADMIN_SINK_ACTION_INVALID")
+        sql = statement.sql
+        params = None
+        if statement.password_ref:
+            if password is None:
+                raise AdminError("ADMIN_PASSWORD_REQUIRED")
+            sql = sql.replace("%", "%%").replace(BIND_MARKER, "%s")
+            params = (password,)
+        cursor = None
+        try:
+            cursor = await self.connection.cursor(aiomysql.SSDictCursor)
+            await cursor.execute(sql, params)
+            rows: list[dict[str, Any]] = []
+            size = 0
+            truncated = False
+            if cursor.description:
+                while True:
+                    row = await cursor.fetchone()
+                    if row is None:
+                        break
+                    safe = {
+                        str(k): v for k, v in row.items()
+                        if not any(s in str(k).lower() for s in ("password", "secret", "token", "authentication"))
+                    }
+                    # Normalized output is serializable before committing execution facts.
+                    safe = json.loads(json.dumps(safe, default=str))
+                    size += len(json.dumps(safe, ensure_ascii=False).encode())
+                    if len(rows) >= 1000 or size > 1048576:
+                        truncated = True
+                        break
+                    rows.append(safe)
+            return {"rows": rows, "truncated": truncated}
+        except asyncio.CancelledError:
+            raise
+        except MySQLError as exc:
+            code = exc.args[0] if exc.args and isinstance(exc.args[0], int) else 0
+            raise MySQLError(code, "Doris management operation failed") from None
+        except Exception:
+            raise AdminError("ADMIN_DRIVER_RESULT_UNKNOWN") from None
+        finally:
+            # Close the physical socket, not an unbuffered cursor (which drains).
+            # A cleanup failure must not turn an acknowledged write into a retry.
+            self.is_healthy = False
+            try:
+                await self.connection.ensure_closed()
+            except Exception:
+                self.logger.warning("Management connection cleanup failed")
+
     async def execute(
         self,
         sql: str,

@@ -30,6 +30,7 @@ MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]]+\]\(([^)\n]+)\)")
 
 TOPIC_PAIRS = (
     ("docs/README.md", "docs/README.zh-CN.md"),
+    ("docs/capabilities/administration.md", "docs/capabilities/administration.zh-CN.md"),
     (
         "docs/getting-started/quickstart.md",
         "docs/getting-started/quickstart.zh-CN.md",

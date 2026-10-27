@@ -50,6 +50,7 @@ migration, and release concerns.
 
 ## Capabilities
 
+- [Direct access management](capabilities/administration.md) — optional, authenticated writes without approval.
 - [Tool domains](capabilities/tool-domains.md) — the 8-domain/55-child contract.
 - [Capability availability](capabilities/availability.md) — version parsing,
   probes, providers, permissions, manifests, and fail-closed behavior.

@@ -123,7 +123,8 @@ Fail Closed，不会落到更高权限连接池。Query、Metadata、FE HTTP 与
 
 ## SQL 与标识符安全
 
-内置 1.0 领域全部只读，`doris_admin` 不注册。
+原有八个领域保持只读。可选 `doris_admin` 默认关闭，使用独立的结构化、精确鉴权管理
+执行入口，无审批，原查询入口不会变为可写。详见[权限管理](../capabilities/administration.zh-CN.md)。
 
 共用 Query Guard 会：
 

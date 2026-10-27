@@ -447,6 +447,7 @@ class SecurityConfig:
     allow_unauthenticated_non_loopback: bool = False
     doris_oauth_base_url: str = ""  # Public base URL for future Doris OAuth metadata
     doris_oauth_child_tools_enabled: bool = False
+    doris_oauth_admin_action_allowlist: list[str] = field(default_factory=list)
     doris_oauth_child_tool_allowlist: list[str] = field(
         default_factory=_default_doris_oauth_child_tool_allowlist
     )
@@ -879,10 +880,11 @@ class ToolExposureConfig:
 
 @dataclass
 class AdministrationConfig:
-    """Fail-closed reservation for future Doris-changing actions."""
+    """Explicitly enabled direct management; no approval or automatic elevation."""
 
     enabled: bool = False
-    require_confirmation: bool = True
+    state_path: str = ""
+    password_file: str = ""
 
 
 @dataclass
@@ -1648,10 +1650,11 @@ class DorisConfig:
             config.administration.enabled = _str_to_bool(
                 os.getenv("MCP_ADMIN_DOMAIN_ENABLED")
             )
-        if "MCP_ADMIN_REQUIRE_CONFIRMATION" in os.environ:
-            config.administration.require_confirmation = _str_to_bool(
-                os.getenv("MCP_ADMIN_REQUIRE_CONFIRMATION")
-            )
+        config.administration.state_path = os.getenv("MCP_ADMIN_STATE_PATH", "")
+        config.administration.password_file = os.getenv("MCP_ADMIN_PASSWORD_FILE", "")
+        config.security.doris_oauth_admin_action_allowlist = _env_csv(
+            "DORIS_OAUTH_ADMIN_ACTION_ALLOWLIST", []
+        )
         if "CAPABILITY_SNAPSHOT_TTL_SECONDS" in os.environ:
             config.capability.snapshot_ttl_seconds = _env_int(
                 "CAPABILITY_SNAPSHOT_TTL_SECONDS",
@@ -1968,9 +1971,8 @@ class DorisConfig:
             },
             "administration": {
                 "enabled": self.administration.enabled,
-                "require_confirmation": (
-                    self.administration.require_confirmation
-                ),
+                "state_path": self.administration.state_path,
+                "password_file": self.administration.password_file,
             },
             "capability": {
                 "snapshot_ttl_seconds": (
@@ -2092,6 +2094,7 @@ class DorisConfig:
                 "doris_oauth_base_url": self.security.doris_oauth_base_url,
                 "doris_oauth_child_tools_enabled": self.security.doris_oauth_child_tools_enabled,
                 "doris_oauth_child_tool_allowlist": self.security.doris_oauth_child_tool_allowlist,
+                "doris_oauth_admin_action_allowlist": self.security.doris_oauth_admin_action_allowlist,
                 "doris_oauth_access_token_expire_seconds": self.security.doris_oauth_access_token_expire_seconds,
                 "doris_oauth_refresh_token_expire_seconds": self.security.doris_oauth_refresh_token_expire_seconds,
                 "doris_oauth_auth_code_expire_seconds": self.security.doris_oauth_auth_code_expire_seconds,
@@ -2274,9 +2277,8 @@ class DorisConfig:
         errors.extend(
             administration_config_errors(
                 enabled=self.administration.enabled,
-                require_confirmation=(
-                    self.administration.require_confirmation
-                ),
+                state_path=self.administration.state_path,
+                password_file=self.administration.password_file,
             )
         )
         if not 1 <= self.capability.snapshot_ttl_seconds <= 86400:
@@ -2620,10 +2622,7 @@ class DorisConfig:
             },
             "administration": {
                 "enabled": self.administration.enabled,
-                "require_confirmation": (
-                    self.administration.require_confirmation
-                ),
-                "status": "reserved",
+                "status": "direct_execution" if self.administration.enabled else "disabled",
             },
             "capability": {
                 "snapshot_ttl_seconds": (
@@ -2827,11 +2826,12 @@ def normalize_effective_auth_config(
     child_allowlist = _coerce_csv_config(
         config.security.doris_oauth_child_tool_allowlist
     )
+    from ..tools.admin_statements import CHILD_ACTIONS
     from ..tools.domain_catalog import FORMAL_CHILD_FEATURE_IDS
 
-    invalid_child_features = set(child_allowlist) - set(
+    invalid_child_features = set(child_allowlist) - (set(
         FORMAL_CHILD_FEATURE_IDS
-    )
+    ) | {f"doris_admin.{child}" for child in CHILD_ACTIONS})
     if invalid_child_features:
         invalid_list = ", ".join(sorted(invalid_child_features))
         raise AuthConfigError(

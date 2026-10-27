@@ -21,8 +21,12 @@
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
+from ..tools.admin_statements import ACTION_FIELDS, CHILD_ACTIONS, action_scope
 from ..tools.domain_catalog import FORMAL_CHILD_FEATURE_IDS
 from .doris_oauth_types import TokenEndpointError
+
+ADMIN_FEATURE_IDS = tuple(f"doris_admin.{child}" for child in CHILD_ACTIONS)
+ADMIN_ACTION_SCOPES = frozenset(action_scope(action) for action in ACTION_FIELDS)
 
 if TYPE_CHECKING:
     from ..utils.config import SecurityConfig
@@ -97,7 +101,7 @@ class DorisOAuthScopePolicy:
         self.server_default_scopes = {
             scope
             for scope in self.server_allowed_scopes
-            if not scope.startswith("child:discover:")
+            if not scope.startswith("child:discover:") and ":doris_admin:" not in scope
         }
         self.forbidden_scopes = set(FORBIDDEN_DORIS_OAUTH_SCOPES)
         self.known_scopes = (
@@ -105,6 +109,9 @@ class DorisOAuthScopePolicy:
             | set(RESOURCE_SCOPES)
             | set(SEMANTIC_SCOPES)
             | set(KNOWN_CHILD_SCOPES)
+            | {child_call_scope(f) for f in ADMIN_FEATURE_IDS}
+            | {child_discovery_scope(f) for f in ADMIN_FEATURE_IDS}
+            | set(ADMIN_ACTION_SCOPES)
             | set(FORBIDDEN_DORIS_OAUTH_SCOPES)
         )
 
@@ -131,13 +138,19 @@ class DorisOAuthScopePolicy:
                     FORMAL_CHILD_FEATURE_IDS,
                 )
             )
-            formal_features = set(FORMAL_CHILD_FEATURE_IDS)
+            formal_features = set(FORMAL_CHILD_FEATURE_IDS) | set(ADMIN_FEATURE_IDS)
             for feature_id in feature_ids:
                 if feature_id not in formal_features:
                     continue
                 allowed.add(child_call_scope(feature_id))
                 allowed.add(child_discovery_scope(feature_id))
 
+        for action in getattr(security_config, "doris_oauth_admin_action_allowlist", ()):
+            if action not in ACTION_FIELDS:
+                raise ValueError("Unknown Doris administration action")
+            child = next(c for c, actions in CHILD_ACTIONS.items() if action in actions)
+            if child_call_scope(f"doris_admin.{child}") in allowed:
+                allowed.add(action_scope(action))
         return allowed
 
     def _configured_feature_ids(

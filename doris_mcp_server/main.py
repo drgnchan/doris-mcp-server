@@ -97,9 +97,9 @@ def _multiworker_environment(
         "MCP_ADMIN_DOMAIN_ENABLED": str(
             config.administration.enabled
         ).lower(),
-        "MCP_ADMIN_REQUIRE_CONFIRMATION": str(
-            config.administration.require_confirmation
-        ).lower(),
+        "MCP_ADMIN_STATE_PATH": config.administration.state_path,
+        "MCP_ADMIN_PASSWORD_FILE": config.administration.password_file,
+        "DORIS_OAUTH_ADMIN_ACTION_ALLOWLIST": ",".join(config.security.doris_oauth_admin_action_allowlist),
         "CAPABILITY_SNAPSHOT_TTL_SECONDS": str(
             config.capability.snapshot_ttl_seconds
         ),
@@ -583,6 +583,8 @@ class DorisServer:
                     return
 
             # Choose startup method based on worker count
+            if workers > 1 and self.config.administration.enabled:
+                raise ValueError("Administration SQLite requires one active worker")
             if workers > 1:
                 self.logger.info(f"Using multi-process mode with {workers} workers")
                 self.logger.info(
