@@ -173,18 +173,7 @@ class AdminRuntime:
             )
             async with asyncio.timeout(30):
                 connection = await self.manager.get_connection(session)
-                # Read-only probe, never trial writes or runtime elevation.
-                version = await connection.execute(
-                    "SELECT @@version_comment AS version",
-                    auth_context=context,
-                    max_rows=1,
-                    max_bytes=4096,
-                )
-                from ..tools.doris_version import parse_doris_version_comment
-
-                parsed = parse_doris_version_comment(str(version.data[0]["version"]))
-                if parsed.major != 3:
-                    raise AdminError("ADMIN_DORIS_VERSION_UNSUPPORTED")
+                # Let the target Doris validate syntax and feature compatibility.
                 sent = True
                 result = await connection.execute_management(
                     child, arguments, context, password=password

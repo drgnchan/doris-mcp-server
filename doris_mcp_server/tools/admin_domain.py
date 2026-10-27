@@ -160,7 +160,7 @@ def _child(name: str) -> ChildToolDefinition:
             variants=(
                 CapabilityVariant(
                     name="native_management",
-                    supported_ranges=(">=3.0.0,<4.0.0",),
+                    supported_ranges=(">=2.0.0",),
                     source_references=(
                         "https://doris.apache.org/docs/3.x/sql-manual/sql-statements/account-management/",
                     ),
@@ -207,7 +207,7 @@ class AdminAvailabilityProvider:
             active_variant="native_management" if permitted else None,
             evidence_sources=("explicit_configuration", "action_authorization"),
             limitations=(
-                "Doris 3.x native RBAC is authoritative; target patch and Cloud combinations are not certified by the read-only matrix.",
+                "The target Doris validates syntax, feature compatibility and native RBAC at execution time; no management-specific version gate or write certification is implied.",
             ),
         )
 

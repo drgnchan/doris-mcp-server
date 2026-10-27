@@ -46,6 +46,9 @@ under **Unreleased** until a new version is selected and published.
 
 ### Changed
 
+- Removed the administration-only Doris 3.x version gate. The target backend
+  now determines statement compatibility at execution time; authorization,
+  read-only isolation and persistent replay protection are unchanged.
 - Refreshed the locked authentication and development toolchain by upgrading
   Authlib to 1.6.12, Pytest to 9.0.3, and Black to 26.3.1, with the complete
   quality, test, protocol-conformance, and wheel-smoke gates rerun on the

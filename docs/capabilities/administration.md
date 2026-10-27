@@ -142,6 +142,11 @@ use; external tokens and existing connections require their own lifecycle manage
 
 ## Verification and limits
 
+Management adds no version probe or major-version gate beyond the server baseline.
+The target Doris validates syntax, features and native RBAC when executing the
+statement; backend rejections are reported as failures, not hidden or retried.
+This does not certify every version or feature combination.
+
 The opt-in test `test/integration/test_admin_doris.py` uses loopback-only disposable
 Doris, real authenticated HTTP, hierarchical/flat exposure, all 14 operations,
 all privilege types, column/table/database/catalog/global scopes, both row-policy

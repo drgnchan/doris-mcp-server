@@ -24,6 +24,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from pymysql import ProgrammingError
 
 from doris_mcp_server.auth.doris_oauth_scope_policy import DorisOAuthScopePolicy
 from doris_mcp_server.tools.admin_domain import ADMIN_DOMAIN, allowed_actions
@@ -141,7 +142,9 @@ def backend(tmp_path):
     )
     conn = Mock()
     conn.execute = AsyncMock(
-        return_value=SimpleNamespace(data=[{"version": "doris-3.1.3-rc01"}])
+        return_value=SimpleNamespace(
+            data=[{"version": "doris-4.0.7-rc02 (Cloud Mode)"}]
+        )
     )
     conn.execute_management = AsyncMock(return_value={"rows": [], "truncated": False})
     conn.connection.ensure_closed = AsyncMock()
@@ -253,6 +256,7 @@ async def test_direct_execution_and_replay(backend):
         *(runtime.execute("manage_roles", request("create_role")) for _ in range(3))
     )
     assert results[0]["execution_status"] == "succeeded"
+    conn.execute.assert_not_awaited()  # No version probe or management-only gate.
     assert conn.execute_management.await_count == 1
     runtime.close()
     assert (await runtime.execute("manage_roles", request("create_role")))[
@@ -261,6 +265,18 @@ async def test_direct_execution_and_replay(backend):
     assert conn.execute_management.await_count == 1
     with pytest.raises(AdminError, match="IDEMPOTENCY_CONFLICT"):
         await runtime.execute("manage_roles", request("create_role", role="different"))
+
+
+@pytest.mark.asyncio
+async def test_backend_rejection_reported_and_not_retried(backend):
+    _, conn, runtime = backend
+    conn.execute_management.side_effect = ProgrammingError(1235, "Unsupported feature")
+    result = await runtime.execute("manage_roles", request("create_role"))
+    assert result["execution_status"] == "failed"
+    assert result["error_code"] == "DORIS_ERROR_1235"
+    assert await runtime.execute("manage_roles", request("create_role")) == result
+    conn.execute.assert_not_awaited()
+    assert conn.execute_management.await_count == 1
 
 
 @pytest.mark.asyncio
