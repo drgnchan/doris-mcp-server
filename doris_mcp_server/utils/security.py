@@ -888,7 +888,12 @@ class AuthenticationProvider:
                 )
 
             from ..tools.admin_statements import CHILD_ACTIONS, action_scope
+            from ..tools.write_domain import action_scope as write_action_scope
 
+            write_actions = getattr(token_info, "write_actions", ())
+            write_permissions = [write_action_scope(action) for action in write_actions]
+            if write_actions:
+                write_permissions.append("child:call:doris_write:execute_write")
             admin_actions = getattr(token_info, "admin_actions", ())
             admin_permissions = [action_scope(action) for action in admin_actions]
             admin_permissions.extend(
@@ -900,7 +905,7 @@ class AuthenticationProvider:
                 token_id=token_info.token_id,
                 user_id=token_info.token_id,  # Use token_id as user_id for token auth
                 roles=["token_user"],  # Default role for token users
-                permissions=["read", "write", *admin_permissions],
+                permissions=["read", "write", *admin_permissions, *write_permissions],
                 security_level=SecurityLevel.INTERNAL,
                 client_ip=credentials.client_ip,
                 session_id=credentials.session_id or f"session_{token_info.token_id}",

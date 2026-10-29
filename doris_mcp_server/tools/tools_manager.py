@@ -42,6 +42,7 @@ from ..utils.query_executor import DorisQueryExecutor
 from ..utils.schema_extractor import MetadataExtractor
 from ..utils.security import get_current_auth_context
 from ..utils.security_analytics_tools import SecurityAnalyticsTools
+from ..utils.write_runtime import WriteRuntime
 from .admin_domain import ADMIN_DOMAIN, AdminAvailabilityProvider
 from .admin_handlers import AdminToolHandlersMixin
 from .capability_detector import DorisCapabilityDetector
@@ -78,6 +79,8 @@ from .search_handlers import SearchToolHandlersMixin
 from .semantic_handlers import SemanticToolHandlersMixin
 from .tool_provider import CustomToolProvider, ToolProviderRuntime
 from .tool_registry import ToolRegistryError
+from .write_domain import WRITE_DOMAIN, WriteAvailabilityProvider
+from .write_statements import WriteError
 
 logger = get_logger(__name__)
 
@@ -111,10 +114,12 @@ class DorisToolsManager(
         baseline = catalog_module.DORIS_DOMAIN_CATALOG
         admin_enabled = getattr(getattr(config, "administration", None), "enabled", False) is True
         self.admin_runtime = AdminRuntime(connection_manager) if admin_enabled else None
+        write_enabled = getattr(getattr(config, "writing", None), "enabled", False) is True
+        self.write_runtime = WriteRuntime(connection_manager) if write_enabled else None
         catalog = DorisDomainCatalog(
-            domains=(*baseline.domains, ADMIN_DOMAIN),
+            domains=(*baseline.domains, *((ADMIN_DOMAIN,) if admin_enabled else ()), *((WRITE_DOMAIN,) if write_enabled else ())),
             legacy_migrations=baseline.legacy_migrations,
-        ) if admin_enabled else baseline
+        ) if admin_enabled or write_enabled else baseline
         self._tool_provider_runtime = ToolProviderRuntime.create(config, tool_providers)
         self.query_executor = DorisQueryExecutor(connection_manager)
         self.table_analyzer = TableAnalyzer(connection_manager)
@@ -202,6 +207,8 @@ class DorisToolsManager(
             domain_availability_provider = self._capability_registry
         if admin_enabled:
             domain_availability_provider = AdminAvailabilityProvider(domain_availability_provider)
+        if write_enabled:
+            domain_availability_provider = WriteAvailabilityProvider(domain_availability_provider)
         self._domain_manifest_service = DomainManifestService(
             catalog=catalog,
             availability_provider=domain_availability_provider,
@@ -255,23 +262,22 @@ class DorisToolsManager(
         """Start runtime resources owned by the tools manager."""
         await self.query_executor.start()
         try:
-            if self.admin_runtime is not None:
-                self.admin_runtime.start()
             await self._tool_provider_runtime.start()
         except Exception:
-            if self.admin_runtime is not None:
-                self.admin_runtime.close()
             await self.query_executor.close()
             raise
 
     async def close(self) -> None:
         """Stop runtime resources owned by the tools manager."""
-        if self.admin_runtime is not None:
-            self.admin_runtime.close()
         if self._capability_registry is not None:
             await self._capability_registry.close()
         await self._tool_provider_runtime.close()
         await self.query_executor.close()
+
+    async def _formal_doris_write_execute_write_tool(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self.write_runtime is None:
+            raise WriteError("WRITE_DISABLED")
+        return await self.write_runtime.execute(arguments)
 
     @staticmethod
     def _required_string(arguments: dict[str, Any], name: str) -> str:

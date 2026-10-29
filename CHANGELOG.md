@@ -27,12 +27,18 @@ under **Unreleased** until a new version is selected and published.
 
 ### Added
 
+- Added default-off `doris_write.execute_write` with explicit `write_actions` and
+  OAuth scopes for bounded internal OLAP INSERT VALUES/SELECT, UPDATE/DELETE with
+  WHERE, CREATE TABLE, DROP TABLE and TRUNCATE TABLE. Each action requires an
+  independent grant; existing tokens gain no new actions automatically.
+  Native source/target RBAC, single submission, secret-safe auditing and
+  Doris transaction-publication results are preserved without a task database.
+
 - Added default-off `doris_admin` direct access management: all 14 privilege,
   role, user and row-policy operation families plus bounded inspection. No
   approval workflow or arbitrary SQL; the original 8/55 surface stays read-only.
 - Added explicit static-token `admin_actions` and OAuth action scopes, private
-  password references, single-active durable request deduplication, and local
-  Doris HTTP acceptance coverage. See [administration](docs/capabilities/administration.md).
+  password references and local Doris HTTP acceptance coverage. See [administration](docs/capabilities/administration.md).
 
 - Added an explicit Dify 1.16.1 compatibility profile for MCP `2025-06-18`
   through the default-off `/mcp/legacy` endpoint, with initialize, stateless
@@ -46,9 +52,15 @@ under **Unreleased** until a new version is selected and published.
 
 ### Changed
 
+- Removed Admin durable execution storage, `MCP_ADMIN_STATE_PATH`, idempotency
+  keys and `get_execution_status`. Legacy keyed calls fail before submission.
+  Every invocation is a new execution; uncertain writes are never automatically
+  retried. Archive old state, remove the retired action grant and refresh clients
+  when upgrading; token/password stores remain required where configured.
+
 - Removed the administration-only Doris 3.x version gate. The target backend
   now determines statement compatibility at execution time; authorization,
-  read-only isolation and persistent replay protection are unchanged.
+  read-only isolation are preserved.
 - Refreshed the locked authentication and development toolchain by upgrading
   Authlib to 1.6.12, Pytest to 9.0.3, and Black to 26.3.1, with the complete
   quality, test, protocol-conformance, and wheel-smoke gates rerun on the
@@ -78,6 +90,16 @@ under **Unreleased** until a new version is selected and published.
   tree in source distributions.
 
 ### Fixed
+
+- Validate SEMI/ANTI JOIN right-hand sources and recheck physical sources after
+  write SQL generation, preventing external/non-OLAP source-check bypasses.
+- Treat ambiguous post-submission server errors, including 1105, as unknown
+  outcomes in Admin and Write; only explicit rejection codes or narrowly
+  recognized native permission denials establish failure, without exposing diagnostics.
+- Discard mutation sockets without COM_QUIT and always reach the original pool
+  release path, including cancellation, to avoid leaked leases on failed drains.
+- Decode length-coded INSERT OK info without confusing byte 123 with a JSON
+  opening brace, while preserving raw-text and empty-info compatibility.
 
 - Preserved fail-closed distribution provenance across version parsing,
   brandless FE/BE component fallback, and certification evidence validation,

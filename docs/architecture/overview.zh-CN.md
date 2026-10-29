@@ -176,9 +176,10 @@ Doris 4.0.6 及更高版本可以由 Companion Producer 把规范事件写入可
 
 ### 管理能力
 
-`doris_admin` 只存在于架构合同，不进行运行时注册。不能通过配置把只读领域升级
-为写操作。未来如果发布管理能力，必须另行设计 Preview、Confirm、Idempotency、
-Rollback 等安全合同。
+默认关闭的 doris_admin 和 doris_write 使用独立授权、独立执行入口，不能通过配置
+把原只读领域升级为写操作。调用直接执行、dry-run 可选，没有审批、持久执行状态或跨请求防重，
+未知结果不自动重试。详见[权限管理](../capabilities/administration.zh-CN.md)和
+[业务写入](../capabilities/business-writes.zh-CN.md)。
 
 ## 源码布局
 

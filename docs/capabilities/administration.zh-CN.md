@@ -23,7 +23,7 @@ under the License.
 
 ## 范围与默认行为
 
-可选的 doris_admin 增加 7 个 Child，启用后为 9 个领域 / 62 个 Child。
+可选的 doris_admin 增加 6 个 Child，启用后为 9 个领域 / 61 个 Child。
 默认仍为 8/55 只读。不引入审批、确认 token、强制预览、任意 SQL、多语句任务或自动重试。
 使用当前已认证请求的 Doris 路由；SQL 成功不等于有效权限或全部会话状态已经验证。
 
@@ -35,17 +35,15 @@ PROPERTY/ALL PROPERTIES、ROW POLICY。
 
 ## 启用和鉴权
 
-单活、一个 Worker，配置本地持久卷：
+启用领域，密码操作另配置受保护的密码引用文件：
 
     administration:
       enabled: true
-      state_path: /var/lib/doris-mcp/executions.db
       password_file: /run/secrets/doris-management.json
 
 对应环境变量：
 
     MCP_ADMIN_DOMAIN_ENABLED=true
-    MCP_ADMIN_STATE_PATH=/var/lib/doris-mcp/executions.db
     MCP_ADMIN_PASSWORD_FILE=/run/secrets/doris-management.json
 
 非密码类操作不要求密码文件。旧 MCP_ADMIN_REQUIRE_CONFIRMATION 不再代表任何审批机制。
@@ -54,7 +52,7 @@ PROPERTY/ALL PROPERTIES、ROW POLICY。
 匿名 HTTP、没有显式认证身份的 stdio 不能写入。
 
 静态 Token：在受保护的既有 Token 文件记录里手工添加精确的 admin_actions 数组，
-例如 ["create_role", "alter_role", "show_roles", "get_execution_status"]。
+例如 ["create_role", "alter_role", "show_roles"]。
 鉴权时派生对应 Child/action 权限。没有该字段的旧记录保持原只读行为。
 HTTP Token 创建接口不会自动签发管理权限。
 
@@ -79,19 +77,24 @@ Flat 模式通过 doris_admin_<child> 调用相同 Handler。
       "arguments": {
         "action": "create_role",
         "role": "example_analyst",
-        "comment": "Analyst access",
-        "idempotency_key": "<首次发送前生成并保存的唯一键>"
+        "comment": "Analyst access"
       }
     }
 
-dry_run=true 仅编译/校验并返回脱敏 SQL，不占用 key，也不承诺以后能执行成功。
-否则直接执行；响应丢失后重用相同 key。get_execution_status 接受
- action=get_execution_status 和 idempotency_key，仅查询同一身份/路由的执行记录。
+dry_run=true 仅编译/校验并返回脱敏 SQL，不承诺以后能执行成功；否则直接执行。
+结果区分 succeeded、failed、dry_run、outcome_unknown。没有执行库、持久状态查询或跨请求防重，
+每次明确调用都是新的执行。超时、断线不能自动重试，也不代表 Doris 已回滚；先只读核实实际状态。
+提交后的 1105 等通用服务端错误保守返回 outcome_unknown，仅已知拒绝类错误码或
+完整匹配已确认原生权限拒绝格式时判为失败；不返回原始诊断。
+调用结束直接关闭套接字并释放原连接池租约，不等待 COM_QUIT。
 
-执行状态区分 succeeded、failed、in_flight、outcome_unknown。
-重启将进行中的记录转为 unknown，不重发 SQL。换 key 就是新请求，不承诺端到端 exactly-once。
-记录保留到显式离线维护，不得通过删除未知记录实现重试。不支持多活或 NFS SQLite，
-第二个活动写进程无法取得存储锁。
+### 从持久化管理版本迁移
+
+删除 MCP_ADMIN_STATE_PATH，并从 Token/OAuth 授权中移除 get_execution_status。
+状态查询 Child 已移除；携带 idempotency_key 的请求在发 SQL 前明确拒绝，不会静默忽略后执行。
+对旧执行库做包含 WAL 状态的一致性备份后归档，保留旧镜像和配置供回退。
+Token 和密码引用文件继续保留；刷新每个已连接客户端/工作目录的工具发现。
+回滚配置不会撤销 SQL，也不能补回本版本运行期间的执行历史。
 
 查询上限为 1,000 行 / 1 MiB，单次调用超时 30 秒。返回 verification_status=not_checked，
 后置效果按需通过 inspect_access 查询。撤销一个绑定不代表撤销角色继承或更广权限。

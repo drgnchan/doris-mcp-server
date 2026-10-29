@@ -195,10 +195,12 @@ afterward when native evidence is not usable.
 
 ### Administration
 
-`doris_admin` is reserved in architecture contracts but absent from runtime
-registration. Read-only domains cannot be upgraded into write operations by
-configuration. A future administration release would require a separate
-preview/confirm/idempotency/rollback security contract.
+Default-off `doris_admin` and `doris_write` use independently authorized sinks.
+Read-only domains cannot be upgraded into writes by configuration. Calls execute
+directly with optional dry-run, without approval, durable execution state or
+cross-request deduplication. Unknown results are never automatically retried.
+See [administration](../capabilities/administration.md) and
+[business writes](../capabilities/business-writes.md).
 
 ## Source layout
 

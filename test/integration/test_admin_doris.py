@@ -107,7 +107,6 @@ async def test_all_management_operations_over_authenticated_http(tmp_path):
             "ENABLE_TOKEN_AUTH": "true",
             "TOKEN_FILE_PATH": str(token_file),
             "MCP_ADMIN_DOMAIN_ENABLED": "true",
-            "MCP_ADMIN_STATE_PATH": str(tmp_path / "executions.db"),
             "MCP_ADMIN_PASSWORD_FILE": str(password_file),
             "TOKEN_DB_VALIDATION_TTL_SECONDS": "60",
         }
@@ -125,15 +124,13 @@ async def test_all_management_operations_over_authenticated_http(tmp_path):
         ) as client:
             discovered = await client.call_tool("doris_admin", {})
             manifest = json.loads(discovered.content[0].text)
-            assert len(manifest["children"]) == 7
+            assert len(manifest["children"]) == 6
 
             async def call(action, **arguments):
                 child = next(
                     c for c, actions in CHILD_ACTIONS.items() if action in actions
                 )
                 arguments = {"action": action, **arguments}
-                if child.startswith("manage_"):
-                    arguments.setdefault("idempotency_key", secrets.token_hex(16))
                 result = await client.call_tool(
                     "doris_admin",
                     {
@@ -152,10 +149,7 @@ async def test_all_management_operations_over_authenticated_http(tmp_path):
                 seen.add(action)
                 return data, arguments
 
-            _, original = await call("create_role", role=role, comment="test role")
-            await call(
-                "create_role", **{k: v for k, v in original.items() if k != "action"}
-            )  # same key, not CREATE twice
+            await call("create_role", role=role, comment="test role")
             await call("alter_role", role=role, comment="changed")
             await call(
                 "create_user", user=user, password_ref="test@v1", default_role=role
@@ -347,7 +341,6 @@ async def test_all_management_operations_over_authenticated_http(tmp_path):
                 {
                     "action": "create_role",
                     "role": role,
-                    "idempotency_key": "flat-create",
                 },
             )
             assert (
@@ -356,7 +349,7 @@ async def test_all_management_operations_over_authenticated_http(tmp_path):
             )
             result = await client.call_tool(
                 "doris_admin_manage_roles",
-                {"action": "drop_role", "role": role, "idempotency_key": "flat-drop"},
+                {"action": "drop_role", "role": role},
             )
             assert (
                 json.loads(result.content[0].text)["data"]["execution_status"]
@@ -379,7 +372,6 @@ async def test_all_management_operations_over_authenticated_http(tmp_path):
                 {
                     "action": "create_role",
                     "role": role,
-                    "idempotency_key": "native-denial",
                 },
             )
             data = json.loads(result.content[0].text)["data"]

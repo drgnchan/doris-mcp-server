@@ -58,9 +58,8 @@ CHILD_ACTIONS = {
         "show_all_properties",
         "show_row_policy",
     ),
-    "get_execution_status": ("get_execution_status",),
 }
-READ_ACTIONS = frozenset(CHILD_ACTIONS["inspect_access"] + ("get_execution_status",))
+READ_ACTIONS = frozenset(CHILD_ACTIONS["inspect_access"])
 BIND_MARKER = "__DORIS_MCP_BIND_VALUE__"
 
 
@@ -254,7 +253,6 @@ ACTION_FIELDS: dict[str, tuple[dict[str, Any], tuple[str, ...]]] = {
     "show_property": ({"username": text()}, ()),
     "show_all_properties": ({}, ()),
     "show_row_policy": ({"target": POLICY_TARGET}, ()),
-    "get_execution_status": ({"idempotency_key": text(128)}, ("idempotency_key",)),
 }
 
 
@@ -269,7 +267,6 @@ def action_schema(action: str) -> dict[str, Any]:
         properties.update(
             {
                 "dry_run": {"type": "boolean", "default": False},
-                "idempotency_key": text(128),
             }
         )
     return obj(properties, "action", *required)
@@ -301,17 +298,13 @@ def _validator(action: str) -> Draft202012Validator:
 
 
 def validate_request(child: str, arguments: dict[str, Any]) -> str:
+    if "idempotency_key" in arguments:
+        raise AdminError("ADMIN_IDEMPOTENCY_REMOVED")
     action = arguments.get("action")
     if not isinstance(action, str) or action not in CHILD_ACTIONS.get(child, ()):
         raise AdminError("ADMIN_ACTION_INVALID")
     if not _validator(action).is_valid(arguments):
         raise AdminError("ADMIN_ARGUMENT_INVALID")
-    if (
-        action not in READ_ACTIONS
-        and not arguments.get("dry_run")
-        and not arguments.get("idempotency_key")
-    ):
-        raise AdminError("ADMIN_IDEMPOTENCY_KEY_REQUIRED")
     return action
 
 
@@ -530,7 +523,7 @@ def compile_statement(child: str, args: dict[str, Any]) -> ManagementStatement:
         "show_all_properties",
     }:
         sql = action.replace("_", " ").upper()
-    elif action != "get_execution_status":
+    else:
         raise AdminError("ADMIN_ACTION_INVALID")
     return ManagementStatement(
         action, sql, tuple(extra), args.get("password_ref"), tuple(warnings)

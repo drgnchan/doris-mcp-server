@@ -40,6 +40,8 @@ from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
 import aiomysql
 from aiomysql import Connection, Pool
+from pymysql import MySQLError
+from pymysql.constants import ER
 
 from ..result_limits import json_array_row_size
 from .config import DorisConfig
@@ -49,6 +51,45 @@ from .logger import get_logger
 if TYPE_CHECKING:
     from ..auth.token_manager import TokenManager
     from .security import AuthContext, DorisSecurityManager
+
+# A server ERR packet alone does not prove rejection: Cloud commit RPC errors
+# also use ER.UNKNOWN_ERROR (1105), possibly after the transaction took effect.
+# Only explicit authorization, syntax, object-resolution and unsupported-feature
+# rejections are treated as definite after a mutation has been submitted.
+DEFINITE_MUTATION_REJECTION_CODES = frozenset({
+    ER.DBACCESS_DENIED_ERROR, ER.ACCESS_DENIED_ERROR, ER.BAD_DB_ERROR,
+    ER.TABLE_EXISTS_ERROR, ER.BAD_FIELD_ERROR, ER.PARSE_ERROR,
+    ER.TABLEACCESS_DENIED_ERROR, ER.COLUMNACCESS_DENIED_ERROR, ER.NO_SUCH_TABLE,
+    ER.SPECIFIC_ACCESS_DENIED_ERROR, ER.NOT_SUPPORTED_YET,
+})
+
+_DORIS_PERMISSION_REJECTION = re.compile(
+    r"\AerrCode = 2, detailMessage = (?:"
+    r"Permission denied: user \[[^\r\n]*\] does not have privilege for "
+    r"\[priv predicate: [^\r\n]*\] command on \[[^\r\n]*\]"
+    r"|(?:LOAD|SELECT) command denied to user '[^\r\n]*' for table '[^\r\n]*'"
+    r")\Z"
+)
+
+
+class DorisMutationRejectedError(MySQLError):
+    """A definite native rejection, retaining its original code but no raw text."""
+
+
+def _sanitize_mutation_error(exc: MySQLError, message: str) -> MySQLError:
+    code = exc.args[0] if exc.args and isinstance(exc.args[0], int) else 0
+    detail = exc.args[1] if len(exc.args) > 1 else None
+    # Doris wraps some pre-execution access checks in generic 1105. Recognize
+    # only the complete native denial shape, never a substring in a commit error.
+    denied = (
+        code == ER.UNKNOWN_ERROR
+        and isinstance(detail, str)
+        and len(detail) <= 65536
+        and _DORIS_PERMISSION_REJECTION.fullmatch(detail) is not None
+    )
+    error_type = DorisMutationRejectedError if denied else MySQLError
+    return error_type(code, message)
+
 
 _SQL_COMMENT_RE = re.compile(r"/\*.*?\*/|--[^\n]*", re.DOTALL)
 _QUOTED_IDENTIFIER_SQL = r"`(?:``|[^`])+`"
@@ -204,6 +245,101 @@ class DorisConnection:
         self.owner_pool = owner_pool
         self.logger = get_logger(__name__)
 
+    async def execute_write(
+        self,
+        arguments: dict[str, Any],
+        auth_context: AuthContext,
+        *,
+        on_submit: Any = None,
+    ) -> dict[str, Any]:
+        """Revalidate, inspect metadata and submit once on this exact connection."""
+        import ast
+
+        from pymysql import MySQLError
+
+        from ..tools.write_domain import authorize_write
+        from ..tools.write_statements import (
+            WriteError,
+            compile_write,
+            validate_table_metadata,
+        )
+
+        statement = compile_write(arguments)
+        authorize_write(auth_context, statement.action)
+        try:
+            cursor = await self.connection.cursor(aiomysql.DictCursor)
+            if statement.action != "create_table":
+                for table in dict.fromkeys((statement.target, *statement.sources)):
+                    await cursor.execute(f"SHOW CREATE TABLE {table}")
+                    metadata = await cursor.fetchone()
+                    ddl = next((v for k, v in (metadata or {}).items() if str(k).lower() == "create table"), None)
+                    if not isinstance(ddl, str):
+                        raise WriteError("WRITE_TABLE_METADATA_UNAVAILABLE")
+                    validate_table_metadata(ddl, statement, target=table == statement.target)
+            if arguments.get("dry_run"):
+                return {"execution_status": "dry_run"}
+            if on_submit is not None:
+                on_submit()
+            await cursor.execute(statement.sql)
+            result: dict[str, Any] = {
+                "execution_status": "succeeded",
+                "affected_rows": cursor.rowcount if isinstance(cursor.rowcount, int) and cursor.rowcount >= 0 else None,
+                "data_visibility": "not_checked",
+            }
+            if statement.action == "insert":
+                # Doris reports transaction publication through the MySQL OK message.
+                # Keep only documented control fields, never return raw driver text.
+                message = getattr(getattr(cursor, "_result", None), "message", b"")
+                candidates = [message]
+                if isinstance(message, bytes) and 0 < len(message) <= 4096:
+                    from pymysql.protocol import MysqlPacket
+
+                    try:
+                        packet = MysqlPacket(message, "utf8")
+                        decoded = packet.read_length_coded_string()
+                        if isinstance(decoded, bytes) and not packet.read_all():
+                            candidates.insert(0, decoded)
+                            if not decoded:
+                                message = decoded  # Empty OK info, including no-op inserts.
+                    except (IndexError, ValueError, AssertionError):
+                        pass
+                facts: Any = None
+                for candidate in candidates:
+                    if isinstance(candidate, bytes):
+                        candidate = candidate.decode("utf-8", errors="replace")
+                    if isinstance(candidate, str) and 0 < len(candidate) <= 4096:
+                        try:
+                            parsed = ast.literal_eval(candidate)
+                        except (ValueError, SyntaxError, RecursionError):
+                            continue
+                        if isinstance(parsed, dict):
+                            facts = parsed
+                            break
+                status = facts.get("status") if isinstance(facts, dict) else None
+                if status in {"VISIBLE", "COMMITTED"}:
+                    result["transaction_status"] = status
+                    result["data_visibility"] = "visible" if status == "VISIBLE" else "not_confirmed"
+                    txn_id = facts.get("txnId")
+                    if isinstance(txn_id, int) or (isinstance(txn_id, str) and txn_id.isdecimal() and len(txn_id) < 32):
+                        result["transaction_id"] = str(txn_id)
+                elif message:
+                    result.update(execution_status="outcome_unknown", error_code="WRITE_INSERT_OUTCOME_UNCONFIRMED")
+            return result
+        except (WriteError, asyncio.CancelledError):
+            raise
+        except MySQLError as exc:
+            raise _sanitize_mutation_error(exc, "Doris business write failed") from None
+        except Exception:
+            raise WriteError("WRITE_DRIVER_RESULT_UNKNOWN") from None
+        finally:
+            self.is_healthy = False
+            try:
+                # Discard the socket immediately; COM_QUIT/drain can fail or hang
+                # after submission. The runtime releases the captured pool lease.
+                self.connection.close()
+            except Exception:
+                self.logger.warning("Write connection cleanup failed")
+
     async def execute_management(
         self,
         child: str,
@@ -232,7 +368,7 @@ class DorisConnection:
         authorize_admin(auth_context, statement.action)
         for action in statement.extra_actions:
             authorize_admin(auth_context, action)
-        if arguments.get("dry_run") or statement.action == "get_execution_status":
+        if arguments.get("dry_run"):
             raise AdminError("ADMIN_SINK_ACTION_INVALID")
         sql = statement.sql
         params = None
@@ -268,8 +404,7 @@ class DorisConnection:
         except asyncio.CancelledError:
             raise
         except MySQLError as exc:
-            code = exc.args[0] if exc.args and isinstance(exc.args[0], int) else 0
-            raise MySQLError(code, "Doris management operation failed") from None
+            raise _sanitize_mutation_error(exc, "Doris management operation failed") from None
         except Exception:
             raise AdminError("ADMIN_DRIVER_RESULT_UNKNOWN") from None
         finally:
@@ -277,7 +412,7 @@ class DorisConnection:
             # A cleanup failure must not turn an acknowledged write into a retry.
             self.is_healthy = False
             try:
-                await self.connection.ensure_closed()
+                self.connection.close()
             except Exception:
                 self.logger.warning("Management connection cleanup failed")
 

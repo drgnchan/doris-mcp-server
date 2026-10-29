@@ -161,8 +161,10 @@ Ossie 拥有语义定义；MetricFlow 拥有指标语义与查询编译。MCP Se
 
 ## 预留与扩展面
 
-- `doris_admin` 默认关闭，显式启用增加 7 个管理 Child（合计 9/62），
+- `doris_admin` 默认关闭，显式启用增加 6 个管理 Child（合计 9/61），
   不改变默认 8/55 只读入口。详见[直接权限管理](administration.zh-CN.md)。
+- 默认关闭的 doris_write 增加一个业务写入 Child；两个扩展同时启用为 10/62，
+  详见[业务写入](business-writes.zh-CN.md)。
 - 自定义 Provider 是显式扩展，不计入 8/55。
 - MCP Resource 与 Prompt 是独立协议面，不是隐藏 Child。
 - 1.0 以前的 Tool 名称不是可调用 Alias。

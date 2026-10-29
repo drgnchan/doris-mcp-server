@@ -64,10 +64,13 @@ CIDRs, and secrets.
 Doris-backed OAuth requires Streamable HTTP and `WORKERS=1` in 1.0 because its
 authorization and per-user pool state are process-local.
 
-### Administration-domain configuration is rejected
+### Administration or business-write domain is missing
 
-`doris_admin` is reserved and intentionally unavailable. Remove attempts to
-enable it; there is no 1.0 management-tool bypass.
+Check its default-off enablement flag and the authenticated caller's exact action
+grants, then refresh discovery for the affected client/workspace. Read-only
+query/governance domains are not write entry points. Remove the retired
+get_execution_status grant when migrating from durable Admin; legacy
+idempotency_key requests must fail, not silently bypass the removed guarantee.
 
 ### Custom provider fails startup
 

@@ -135,8 +135,10 @@ See the complete [Quick start](docs/getting-started/quickstart.md) and
 
 ## Security boundary
 
-- The built-in 1.0 catalog is read-only; `doris_admin` is reserved and not
-  registered.
+- The default 8/55 catalog is read-only. Separately authorized, default-off
+  [Admin](docs/capabilities/administration.md) and
+  [business writes](docs/capabilities/business-writes.md) use independent execution
+  sinks, without automatic retry or cross-request deduplication.
 - Static tokens, JWT, external OAuth/OIDC, and Doris-backed OAuth are supported
   under mutually validated configuration boundaries.
 - Domain discovery and child execution use exact authorization identifiers.

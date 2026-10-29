@@ -110,13 +110,11 @@ def filtered_child(child: ChildToolDefinition, context: Any) -> ChildToolDefinit
 
 
 def administration_config_errors(
-    *, enabled: Any, state_path: Any = "", password_file: Any = ""
+    *, enabled: Any, password_file: Any = ""
 ) -> tuple[str, ...]:
     errors = []
     if not isinstance(enabled, bool):
         errors.append("Administration enabled flag must be boolean")
-    if not isinstance(state_path, str) or (enabled and not state_path.strip()):
-        errors.append("Administration state_path is required when enabled")
     if not isinstance(password_file, str):
         errors.append("Administration password_file must be a path string")
     return tuple(errors)
@@ -128,10 +126,10 @@ def _child(name: str) -> ChildToolDefinition:
         title=name.replace("_", " ").title(),
         canonical_description=(
             "Authenticated Doris access management. One structured operation per call; "
-            "dry_run is optional, approval is not required. Reuse the same idempotency_key "
-            "after response loss. SQL success does not prove effective access."
+            "dry_run is optional, approval is not required. No cross-request deduplication; "
+            "never automatically retry a lost response. SQL success does not prove effective access."
             if name.startswith("manage_")
-            else "Inspect bounded access metadata or your own durable execution result."
+            else "Inspect bounded access metadata."
         ),
         input_schema=child_schema(name),
         output_schema={
@@ -153,7 +151,7 @@ def _child(name: str) -> ChildToolDefinition:
         handler_name=f"child:doris_admin:{name}",
         authorization_policy=f"child:call:doris_admin:{name}",
         annotations=_READ
-        if name in {"inspect_access", "get_execution_status"}
+        if name == "inspect_access"
         else ADMIN_ACTION_ANNOTATIONS,
         support_contract=ChildSupportContract(
             rule_id=f"doris_admin.{name}",
@@ -227,7 +225,7 @@ class AdminAvailabilityProvider:
                 child.name: await self.availability_for(domain, child, auth_context)
                 for child in children
             },
-            generation_fingerprint="admin-direct-v1"
+            generation_fingerprint="admin-stateless-v2"
             if domain.name == ADMIN_DOMAIN_NAME
             else "",
         )

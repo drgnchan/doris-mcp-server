@@ -73,7 +73,7 @@ uv run python generate_tool_catalog.py --check
 
 1. 确认操作属于现有领域。新顶级领域会改变稳定 Host 合同，需要架构 Review。
 2. 原有 8/55 保持只读。管理操作仅进入默认关闭、独立鉴权的 Admin 执行入口，
-   不能放宽查询 Guard。
+   业务写入使用同样独立授权的 Write 入口，不能放宽查询 Guard。
 3. 定义唯一 Feature ID、Child Name、Title、Canonical Description、Input/Output
    Schema、Annotation、Authorization Policy、Version Range、Variant 与
    Probe/Provider。
@@ -146,7 +146,8 @@ Coverage Gate 除全仓下限外，还包括 Protocol、Authentication 和 Core 
 不能把破坏性或未审查测试指向共享集群。独立的
 `test/integration/test_admin_doris.py` 是管理写入的显式例外：必须设置
 `DORIS_ADMIN_E2E=1`，仅使用回环地址的临时 Docker Doris、随机对象名和清理逻辑，
-不得使用共享只读测试集群。
+不得使用共享只读测试集群。业务写入测试 test/integration/test_write_doris.py 遵守
+同样的隔离例外，需显式设置 DORIS_WRITE_E2E=1。
 
 ### MCP Conformance
 

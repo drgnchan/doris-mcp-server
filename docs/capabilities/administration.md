@@ -23,7 +23,7 @@ under the License.
 
 ## Scope and defaults
 
-The optional `doris_admin` domain adds seven children (9 domains / 62 children
+The optional `doris_admin` domain adds six children (9 domains / 61 children
 when enabled). The default remains 8/55 read-only. No approval service, confirmation
 token, mandatory preview, arbitrary SQL, multi-statement job or automatic retry is
 introduced. Every management call uses the authenticated request's existing Doris
@@ -39,12 +39,11 @@ SHOW ROW POLICY. Column scope supports SELECT only.
 
 ## Enablement and authorization
 
-Configure one active worker and a private durable local volume:
+Enable the domain and optionally configure a protected password file:
 
 ```yaml
 administration:
   enabled: true
-  state_path: /var/lib/doris-mcp/executions.db
   password_file: /run/secrets/doris-management.json
 ```
 
@@ -52,7 +51,6 @@ Equivalent environment:
 
 ```dotenv
 MCP_ADMIN_DOMAIN_ENABLED=true
-MCP_ADMIN_STATE_PATH=/var/lib/doris-mcp/executions.db
 MCP_ADMIN_PASSWORD_FILE=/run/secrets/doris-management.json
 ```
 
@@ -65,7 +63,7 @@ use a different, deliberately configured maintenance identity for account change
 Unauthenticated HTTP and stdio without explicit authenticated identity cannot write.
 
 For a static token, manually add an exact `admin_actions` array to its existing,
-owner-only token-file record, for example `["create_role", "alter_role", "show_roles", "get_execution_status"]`.
+owner-only token-file record, for example `["create_role", "alter_role", "show_roles"]`.
 Token authentication derives the exact child/action permissions. Existing records
 without this field keep their existing read behavior. The HTTP token-creation API
 does not silently issue administration rights.
@@ -94,22 +92,32 @@ Flat mode exposes the same handlers as `doris_admin_<child>`.
   "arguments": {
     "action": "create_role",
     "role": "example_analyst",
-    "comment": "Analyst access",
-    "idempotency_key": "<unique-key-saved-before-first-send>"
+    "comment": "Analyst access"
   }
 }
 ```
 
-`dry_run=true` only compiles/validates the request and returns redacted SQL. It
-neither reserves the key nor promises later backend success. Otherwise the call
-executes directly; use the same key on response loss. `get_execution_status` accepts
-`action=get_execution_status` and the key, and only returns the same principal/route's record.
+`dry_run=true` only compiles/validates the request and returns redacted SQL; it
+does not promise later backend success. Otherwise the call executes directly.
 
-Results distinguish `succeeded`, `failed`, `in_flight` and `outcome_unknown`.
-A restarted in-flight record becomes unknown and is never resubmitted. Changing a
-key creates a new request; this is not end-to-end exactly-once. Records are retained
-until explicit offline maintenance; unknown records must not be removed to retry.
-No distributed/NFS SQLite deployment is supported. A second active writer fails.
+Results distinguish `succeeded`, `failed`, `dry_run` and `outcome_unknown`.
+There is no execution database, persistent status API or cross-request deduplication.
+Every explicit invocation is a new execution. Never automatically retry a timeout
+or lost response; inspect the actual Doris state before deciding what to do.
+Cancellation/socket closure does not establish that Doris rolled back. Generic
+server errors such as 1105 after submission remain outcome_unknown; only known
+rejection codes or complete, narrowly recognized native permission denials establish failure. Sockets are discarded directly and the original
+pool lease is released without waiting for COM_QUIT.
+
+### Migrating from durable administration
+
+Remove `MCP_ADMIN_STATE_PATH` and `get_execution_status` from token/OAuth grants.
+The status child is removed; requests containing `idempotency_key` are explicitly
+rejected before SQL submission, never silently executed without deduplication.
+Archive the previous execution database consistently (including SQLite WAL state),
+and retain the old image/configuration for rollback. Do not remove token or password
+reference files. Refresh tool discovery in every active client/workspace. Rolling
+back configuration does not undo SQL or reconstruct this version's execution history.
 
 Queries are bounded to 1,000 rows / 1 MiB; calls have a 30-second timeout. Results
 report `verification_status=not_checked`; use inspect_access for further evidence.

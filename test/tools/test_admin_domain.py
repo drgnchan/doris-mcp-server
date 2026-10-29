@@ -15,11 +15,10 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""Core direct-management scenarios and authorization/replay regressions."""
+"""Direct-management, stateless execution and authorization regressions."""
 
 import asyncio
 import json
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -39,7 +38,6 @@ from doris_mcp_server.tools.admin_statements import (
 from doris_mcp_server.tools.domain_catalog import DORIS_DOMAIN_CATALOG
 from doris_mcp_server.tools.domain_dispatcher import ToolNotFoundError
 from doris_mcp_server.tools.tools_manager import DorisToolsManager
-from doris_mcp_server.utils.admin_execution_store import AdminExecutionStore
 from doris_mcp_server.utils.admin_runtime import AdminRuntime
 from doris_mcp_server.utils.config import DorisConfig
 from doris_mcp_server.utils.db import DorisConnection
@@ -115,7 +113,6 @@ def request(action, **updates):
     return {
         "action": action,
         **SAMPLES.get(action, {}),
-        "idempotency_key": "test-key",
         **updates,
     }
 
@@ -134,7 +131,6 @@ def backend(tmp_path):
     manager = Mock()
     manager.config = DorisConfig()
     manager.config.administration.enabled = True
-    manager.config.administration.state_path = str(tmp_path / "executions.db")
     manager.config.database.user = "root"
     manager.get_database_config_for_auth_context.return_value = manager.config.database
     manager.get_route_identity.return_value = SimpleNamespace(
@@ -153,7 +149,7 @@ def backend(tmp_path):
     token = set_current_auth_context(context())
     runtime = AdminRuntime(manager)
     yield manager, conn, runtime
-    runtime.close()
+    assert not list(tmp_path.glob("*.db*"))  # No persistent execution database.
     reset_auth_context(token)
 
 
@@ -223,7 +219,6 @@ def test_strict_action_fields_and_compound_effects():
         "action": "alter_user",
         "user": USER,
         "password_ref": "alice@v1",
-        "idempotency_key": "x",
     }
     assert compile_statement("manage_users", args).extra_actions == ("set_password",)
 
@@ -250,31 +245,26 @@ def test_supported_predicate():
 
 
 @pytest.mark.asyncio
-async def test_direct_execution_and_replay(backend):
+async def test_each_explicit_call_executes_without_cross_request_deduplication(backend):
     _, conn, runtime = backend
     results = await asyncio.gather(
         *(runtime.execute("manage_roles", request("create_role")) for _ in range(3))
     )
-    assert results[0]["execution_status"] == "succeeded"
-    conn.execute.assert_not_awaited()  # No version probe or management-only gate.
-    assert conn.execute_management.await_count == 1
-    runtime.close()
-    assert (await runtime.execute("manage_roles", request("create_role")))[
-        "execution_status"
-    ] == "succeeded"
-    assert conn.execute_management.await_count == 1
-    with pytest.raises(AdminError, match="IDEMPOTENCY_CONFLICT"):
-        await runtime.execute("manage_roles", request("create_role", role="different"))
+    assert all(r["execution_status"] == "succeeded" for r in results)
+    assert len({r["request_id"] for r in results}) == 3
+    conn.execute.assert_not_awaited()
+    assert conn.execute_management.await_count == 3
 
 
 @pytest.mark.asyncio
-async def test_backend_rejection_reported_and_not_retried(backend):
+@pytest.mark.parametrize("code,status", [(1235, "failed"), (1105, "outcome_unknown")])
+async def test_backend_rejection_reported_and_not_retried(backend, code, status):
     _, conn, runtime = backend
-    conn.execute_management.side_effect = ProgrammingError(1235, "Unsupported feature")
+    conn.execute_management.side_effect = ProgrammingError(code, "secret backend diagnostics")
     result = await runtime.execute("manage_roles", request("create_role"))
-    assert result["execution_status"] == "failed"
-    assert result["error_code"] == "DORIS_ERROR_1235"
-    assert await runtime.execute("manage_roles", request("create_role")) == result
+    assert result["execution_status"] == status
+    assert result["error_code"] == f"DORIS_ERROR_{code}"
+    assert "secret backend diagnostics" not in json.dumps(result)
     conn.execute.assert_not_awaited()
     assert conn.execute_management.await_count == 1
 
@@ -298,41 +288,17 @@ async def test_optional_dry_run_no_submission(backend):
 
 
 @pytest.mark.asyncio
-async def test_unknown_is_not_retried_and_status_is_private(backend):
+async def test_unknown_is_not_retried_and_legacy_contract_is_rejected(backend):
     _, conn, runtime = backend
     conn.execute_management.side_effect = TimeoutError()
     result = await runtime.execute("manage_roles", request("create_role"))
     assert result["execution_status"] == "outcome_unknown"
-    assert (await runtime.execute("manage_roles", request("create_role"))) == result
     assert conn.execute_management.await_count == 1
-    assert (
-        await runtime.execute(
-            "get_execution_status",
-            {"action": "get_execution_status", "idempotency_key": "test-key"},
-        )
-    ) == result
-    other = context()
-    other.user_id = "other"
-    token = set_current_auth_context(other)
-    try:
-        with pytest.raises(AdminError, match="NOT_FOUND"):
-            await runtime.execute(
-                "get_execution_status",
-                {"action": "get_execution_status", "idempotency_key": "test-key"},
-            )
-    finally:
-        reset_auth_context(token)
-
-
-def test_restart_inflight_is_unknown(tmp_path):
-    path = str(tmp_path / "store.db")
-    store = AdminExecutionStore(path)
-    store.claim("p", "r", "k", "d", "create_role")
-    store.close()
-    store = AdminExecutionStore(path)
-    assert store.get("p", "r", "k")["execution_status"] == "outcome_unknown"
-    assert store.claim("p", "r", "k", "d", "create_role")[0] is False
-    store.close()
+    with pytest.raises(AdminError, match="IDEMPOTENCY_REMOVED"):
+        await runtime.execute("manage_roles", request("create_role", idempotency_key="old"))
+    with pytest.raises(AdminError, match="ACTION_INVALID"):
+        await runtime.execute("get_execution_status", {"action": "get_execution_status"})
+    assert conn.execute_management.await_count == 1
 
 
 @pytest.mark.asyncio
@@ -356,16 +322,13 @@ async def test_password_reference_bound_to_principal_and_target(backend, tmp_pat
     result = await runtime.execute("manage_users", request("set_password"))
     assert result["execution_status"] == "succeeded"
     assert "secret-not-in-result" not in json.dumps(result)
-    assert "secret-not-in-result" not in Path(
-        manager.config.administration.state_path
-    ).read_bytes().decode(errors="ignore")
     assert (
         conn.execute_management.call_args.kwargs["password"] == "secret-not-in-result"
     )
     denied = await runtime.execute(
         "manage_users",
         request(
-            "set_password", user={"name": "bob", "host": "%"}, idempotency_key="other"
+            "set_password", user={"name": "bob", "host": "%"}
         ),
     )
     assert denied["error_code"] == "ADMIN_PASSWORD_REFERENCE_FORBIDDEN"
@@ -410,7 +373,7 @@ async def test_default_disabled_and_enabled_dispatch(backend, mode):
     try:
         if mode == "hierarchical":
             manifest = json.loads(await tools.call_tool("doris_admin", {}))
-            assert len(manifest["children"]) == 7
+            assert len(manifest["children"]) == 6
             name, arguments = (
                 "doris_admin",
                 {
@@ -425,7 +388,7 @@ async def test_default_disabled_and_enabled_dispatch(backend, mode):
         assert result["data"]["execution_status"] == "succeeded"
         assert conn.execute_management.await_count == 1
     finally:
-        tools.admin_runtime.close()
+        assert not hasattr(tools.admin_runtime, "store")
 
 
 @pytest.mark.asyncio

@@ -76,7 +76,8 @@ Before adding or changing a child:
 1. Confirm the operation belongs in an existing domain. A new top-level domain
    changes the stable Host contract and requires architecture review.
 2. Keep the original 8/55 surface read-only. Management belongs only in the
-   default-off, separately authorized Admin sink; never relax the query guard.
+   default-off, separately authorized Admin sink; business writes use the equally
+   explicit Write sink. Never relax the query guard.
 3. Define one exact feature ID, child name, title, canonical description,
    input/output Schema, annotations, authorization policy, version range,
    variants, and probes/providers.
@@ -157,7 +158,9 @@ management writes. Validate:
 Never point destructive or unreviewed tests at a shared cluster. The separate
 `test/integration/test_admin_doris.py` is an explicit exception for management
 writes: `DORIS_ADMIN_E2E=1`, a disposable loopback-only Docker Doris, randomly
-named objects and cleanup. It must never use the shared read-only test cluster.
+named objects and cleanup. Business writes follow the same exception in
+`test/integration/test_write_doris.py` with `DORIS_WRITE_E2E=1`. Neither may use
+the shared read-only test cluster.
 
 ### MCP conformance
 

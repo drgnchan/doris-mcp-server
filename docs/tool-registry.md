@@ -126,7 +126,7 @@ This document describes internal 1.0 routing contracts. The pre-1.0 flat names a
 
 ## Optional direct administration
 
-Disabled by default. Explicit enablement adds seven children (9/62 total).
+Disabled by default. Explicit enablement adds six children (9/61 total).
 No approval workflow; exact action authorization and native Doris RBAC apply.
 See [administration](capabilities/administration.md) for configuration and limits.
 
@@ -138,4 +138,9 @@ See [administration](capabilities/administration.md) for configuration and limit
 | `doris_admin.manage_users` | `create_user`, `drop_user`, `alter_user`, `set_password`, `set_property` |
 | `doris_admin.manage_row_policies` | `create_row_policy`, `drop_row_policy` |
 | `doris_admin.inspect_access` | `show_grants`, `show_all_grants`, `show_roles`, `show_privileges`, `show_property`, `show_all_properties`, `show_row_policy` |
-| `doris_admin.get_execution_status` | `get_execution_status` |
+
+## Optional business writes
+
+Disabled by default. doris_write.execute_write adds one child; both optional domains give 10/62 total.
+INSERT VALUES/SELECT, UPDATE/DELETE with WHERE, basic CREATE TABLE, DROP TABLE and TRUNCATE TABLE require exact write_actions and native Doris RBAC.
+No execution database, idempotency key or automatic retry. See [business writes](capabilities/business-writes.md).

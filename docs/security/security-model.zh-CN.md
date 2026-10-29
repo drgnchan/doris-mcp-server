@@ -125,6 +125,8 @@ Fail Closed，不会落到更高权限连接池。Query、Metadata、FE HTTP 与
 
 原有八个领域保持只读。可选 `doris_admin` 默认关闭，使用独立的结构化、精确鉴权管理
 执行入口，无审批，原查询入口不会变为可写。详见[权限管理](../capabilities/administration.zh-CN.md)。
+可选 doris_write 同样需要独立动作授权和 AST 校验，不继承 Admin 权限，源/目标原生 RBAC
+仍必须通过。两个领域均没有持久执行库或自动重试，详见[业务写入](../capabilities/business-writes.zh-CN.md)。
 
 共用 Query Guard 会：
 

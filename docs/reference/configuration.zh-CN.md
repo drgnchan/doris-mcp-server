@@ -88,9 +88,13 @@ HTTP 安全：
 | `MCP_TOOL_EXPOSURE_MODE` | `hierarchical`（默认）或 `flat` |
 | `ALLOW_UNAUTHENTICATED_NON_LOOPBACK` | 危险且只供测试的绑定绕过 |
 
-`MCP_ADMIN_DOMAIN_ENABLED` 默认 `false`。启用直接管理需要受保护的
-`MCP_ADMIN_STATE_PATH`、精确动作权限和一个活动 Worker；密码操作还使用
+`MCP_ADMIN_DOMAIN_ENABLED` 默认 `false`。启用直接管理需要精确动作权限，
+不需要执行库或单 Worker 限制；密码操作还使用
 `MCP_ADMIN_PASSWORD_FILE`。没有审批/确认配置，详见[权限管理](../capabilities/administration.zh-CN.md)。
+
+`MCP_WRITE_DOMAIN_ENABLED` 也默认 `false`，需显式授予 `write_actions` 或精确 OAuth scopes。
+Doris OAuth 还需 `DORIS_OAUTH_WRITE_ACTION_ALLOWLIST`，以及 Child 白名单中的
+`doris_write.execute_write`。没有写入状态库路径，详见[业务写入](../capabilities/business-writes.zh-CN.md)。
 
 ## Query、Response 与并发上限
 

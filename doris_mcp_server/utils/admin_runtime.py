@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""Direct access-management runtime: identity, deduplication, one SQL, audit."""
+"""Direct access management: one submission, identity, native RBAC and audit."""
 
 from __future__ import annotations
 
@@ -25,11 +25,12 @@ import json
 import os
 import secrets
 import stat
+import time
 from typing import Any
 
 from ..tools.admin_domain import authorize_admin
 from ..tools.admin_statements import AdminError, compile_statement
-from .admin_execution_store import AdminExecutionStore
+from .db import DEFINITE_MUTATION_REJECTION_CODES, DorisMutationRejectedError
 from .logger import get_audit_logger
 from .security import get_current_auth_context
 
@@ -38,18 +39,6 @@ class AdminRuntime:
     def __init__(self, manager: Any) -> None:
         self.manager = manager
         self.config = manager.config.administration
-        self.store: AdminExecutionStore | None = None
-
-    def start(self) -> None:
-        if self.config.enabled and self.store is None:
-            if not self.config.state_path:
-                raise AdminError("ADMIN_STATE_PATH_REQUIRED")
-            self.store = AdminExecutionStore(self.config.state_path)
-
-    def close(self) -> None:
-        if self.store is not None:
-            self.store.close()
-            self.store = None
 
     def _password(self, reference: str, principal: str, user: dict[str, Any]) -> str:
         if not self.config.password_file:
@@ -99,7 +88,7 @@ class AdminRuntime:
 
     def _protect_identity(self, arguments: dict[str, Any], context: Any) -> None:
         action = arguments["action"]
-        if action.startswith("show_") or action == "get_execution_status":
+        if action.startswith("show_"):
             return
         database = self.manager.get_database_config_for_auth_context(context)
         protected = {"root", "admin", database.user, getattr(context, "doris_user", "")}
@@ -134,35 +123,15 @@ class AdminRuntime:
                 "sql": statement.display_sql,
                 "warnings": list(statement.warnings),
             }
-        self.start()
-        if self.store is None:
-            raise AdminError("ADMIN_STORE_UNAVAILABLE")
-        key = arguments.get("idempotency_key", "")
-        if statement.action == "get_execution_status":
-            record = self.store.get(principal, route, key)
-            return record
-        canonical = {
-            k: v
-            for k, v in arguments.items()
-            if k not in {"idempotency_key", "dry_run"}
-        }
-        digest = hashlib.sha256(
-            json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
-        if not statement.read_only:
-            claimed, record = self.store.claim(
-                principal, route, key, digest, statement.action
-            )
-            if not claimed:
-                return record
-        else:
-            record = {
-                "action": statement.action,
-                "execution_status": "in_flight",
-                "verification_status": "not_checked",
-                "warnings": [],
-            }
         session = "admin_" + secrets.token_hex(12)
+        started = time.monotonic()
+        record: dict[str, Any] = {
+            "action": statement.action,
+            "request_id": session,
+            "execution_status": "outcome_unknown",
+            "verification_status": "not_checked",
+            "warnings": [],
+        }
         connection = None
         sent = False
         try:
@@ -188,17 +157,22 @@ class AdminRuntime:
             record["execution_status"] = "outcome_unknown" if sent else "failed"
             record["error_code"] = exc.code
         except Exception as exc:
-            # Driver ERR packets prove rejection; transport errors do not.
+            # Generic server errors may occur after commit; only known
+            # rejection codes establish a definite failure after submission.
             from pymysql import MySQLError
 
             code = exc.args[0] if isinstance(exc, MySQLError) and exc.args else None
-            definite = isinstance(code, int) and 0 < code < 2000
+            server_error = isinstance(code, int) and 0 < code < 2000
+            definite = (
+                code in DEFINITE_MUTATION_REJECTION_CODES
+                or isinstance(exc, DorisMutationRejectedError)
+            )
             record["execution_status"] = (
                 "failed" if not sent or definite else "outcome_unknown"
             )
             record["error_code"] = (
                 f"DORIS_ERROR_{code}"
-                if definite
+                if server_error
                 else "ADMIN_EXECUTION_UNCERTAIN"
                 if sent
                 else "ADMIN_CONNECTION_FAILED"
@@ -226,23 +200,25 @@ class AdminRuntime:
                 if name in arguments
             }
             record["warnings"] = list(statement.warnings)
-            if not statement.read_only:
-                # This also runs on cancellation. Never mark a lost write retryable.
-                self.store.finish(principal, route, key, record)
+            audit_target = {
+                name: value for name, value in record["target"].items()
+                if name not in {"properties", "password_policy", "unlock"}
+            }
             get_audit_logger().info(
-                "event=admin_execution principal=%s route=%s action=%s key_digest=%s status=%s target=%s",
+                "event=admin_execution principal=%s route=%s action=%s request_id=%s status=%s duration_ms=%s error_code=%s target=%s",
                 hashlib.sha256(principal.encode()).hexdigest(),
                 route,
                 statement.action,
-                hashlib.sha256(key.encode()).hexdigest(),
+                session,
                 record["execution_status"],
-                json.dumps(record["target"], ensure_ascii=True),
+                round((time.monotonic() - started) * 1000),
+                record.get("error_code", ""),
+                json.dumps(audit_target, ensure_ascii=True),
             )
             if connection is not None:
                 # Never reuse a management connection after credential/privilege changes.
                 connection.is_healthy = False
                 try:
-                    await connection.connection.ensure_closed()
                     await self.manager.release_connection(session, connection)
                 except Exception:
                     get_audit_logger().warning("event=admin_connection_cleanup_failed")

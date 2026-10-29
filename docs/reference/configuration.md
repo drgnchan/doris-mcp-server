@@ -92,9 +92,14 @@ All FE/BE destinations are operator configuration, never caller arguments.
 | `ALLOW_UNAUTHENTICATED_NON_LOOPBACK` | dangerous test-only bind override |
 
 `MCP_ADMIN_DOMAIN_ENABLED` defaults to `false`. Direct administration requires
-a private `MCP_ADMIN_STATE_PATH`, exact action permissions and one active worker.
+exact action permissions; no execution database or single-worker constraint is needed.
 Password operations additionally use `MCP_ADMIN_PASSWORD_FILE`. There is no
 approval/confirmation setting. See [administration](../capabilities/administration.md).
+
+`MCP_WRITE_DOMAIN_ENABLED` also defaults to `false`; business writes require explicit
+`write_actions` or exact OAuth scopes. Doris OAuth additionally uses
+`DORIS_OAUTH_WRITE_ACTION_ALLOWLIST` and `doris_write.execute_write` in the child
+allowlist. No write state path exists. See [business writes](../capabilities/business-writes.md).
 
 ## Query, response, and concurrency limits
 

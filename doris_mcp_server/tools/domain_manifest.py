@@ -256,6 +256,10 @@ def authorized_child_discovery(
     child: ChildToolDefinition,
 ) -> bool:
     """Require exact OAuth discovery grants and preserve local compatibility."""
+    if domain.name == "doris_write":
+        from .write_domain import allowed_actions as write_actions
+
+        return bool(write_actions(auth_context))
     if domain.name == "doris_admin":
         from .admin_domain import allowed_actions
 
@@ -291,7 +295,7 @@ def authorized_child_discovery(
         value
         for value in controls
         if value.startswith(("child:call:", "child:discover:"))
-        and (is_oauth or ":doris_admin:" not in value)
+        and (is_oauth or not any(d in value for d in (":doris_admin:", ":doris_write:")))
     }
     if not is_oauth and not child_controls:
         return True
@@ -337,6 +341,10 @@ def authorized_child_execution(
     child: ChildToolDefinition,
 ) -> bool:
     """Require an exact child call grant on OAuth execution paths."""
+    if domain.name == "doris_write":
+        from .write_domain import allowed_actions as write_actions
+
+        return bool(write_actions(auth_context))
     if domain.name == "doris_admin":
         from .admin_domain import allowed_actions
 
@@ -403,7 +411,7 @@ def authorized_child_execution(
         value
         for value in controls
         if value.startswith(("child:call:", "child:discover:"))
-        and ":doris_admin:" not in value
+        and not any(d in value for d in (":doris_admin:", ":doris_write:"))
     }
     return not child_controls
 
@@ -521,6 +529,10 @@ class DomainManifestService:
             from .admin_domain import filtered_child
 
             authorized_children = tuple(filtered_child(c, auth_context) for c in authorized_children)
+        elif domain.name == "doris_write":
+            from .write_domain import filtered_child as filtered_write_child
+
+            authorized_children = tuple(filtered_write_child(c, auth_context) for c in authorized_children)
         batch_resolver = getattr(
             self._availability_provider,
             "resolve_domain",
@@ -644,12 +656,22 @@ class DomainManifestManagerMixin:
 
 def _build_top_level_tool(domain: DomainDefinition) -> Tool:
     annotations = domain.annotations
+    input_schema = DOMAIN_TOOL_INPUT_SCHEMA
+    if domain.name in {"doris_admin", "doris_write"}:
+        # Avoid repeating envelope help; exact schemas remain in child discovery.
+        input_schema = {
+            **DOMAIN_TOOL_INPUT_SCHEMA,
+            "properties": {
+                name: {k: v for k, v in schema.items() if k != "description"}
+                for name, schema in DOMAIN_TOOL_INPUT_SCHEMA["properties"].items()
+            },
+        }
     return Tool(
         name=domain.name,
         title=domain.title,
         description=domain.description + DOMAIN_DISCOVERY_DESCRIPTION_SUFFIX,
-        input_schema=DOMAIN_TOOL_INPUT_SCHEMA,
-        output_schema=({"type": "object"} if domain.name == "doris_admin" else DOMAIN_TOOL_OUTPUT_SCHEMA),
+        input_schema=input_schema,
+        output_schema=({"type": "object"} if domain.name in {"doris_admin", "doris_write"} else DOMAIN_TOOL_OUTPUT_SCHEMA),
         annotations=ToolAnnotations(
             title=domain.title,
             read_only_hint=annotations.read_only,

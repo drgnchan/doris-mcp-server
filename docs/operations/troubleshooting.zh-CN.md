@@ -61,9 +61,11 @@ Resource、Key、Base URL、Proxy CIDR 和 Secret。
 1.0 的 Doris OAuth 要求 Streamable HTTP 和 `WORKERS=1`，因为 Authorization 与
 用户连接池状态都在进程内。
 
-### 管理领域配置被拒绝
+### 管理或业务写入领域不可见
 
-`doris_admin` 只做预留且故意不可用。移除启用配置；1.0 没有管理 Tool 绕过。
+检查默认关闭的领域开关、当前身份的精确动作授权，再刷新受影响客户端/工作目录的工具发现。
+只读 Query/Governance 不是写入入口。迁移旧 Admin 时移除 get_execution_status 授权；
+携带旧 idempotency_key 的请求必须失败，不能静默绕过已移除的防重保证。
 
 ### 自定义 Provider 令启动失败
 

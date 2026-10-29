@@ -23,10 +23,14 @@ from typing import TYPE_CHECKING
 
 from ..tools.admin_statements import ACTION_FIELDS, CHILD_ACTIONS, action_scope
 from ..tools.domain_catalog import FORMAL_CHILD_FEATURE_IDS
+from ..tools.write_domain import action_scope as write_action_scope
+from ..tools.write_statements import WRITE_ACTIONS
 from .doris_oauth_types import TokenEndpointError
 
 ADMIN_FEATURE_IDS = tuple(f"doris_admin.{child}" for child in CHILD_ACTIONS)
 ADMIN_ACTION_SCOPES = frozenset(action_scope(action) for action in ACTION_FIELDS)
+WRITE_FEATURE_IDS = ("doris_write.execute_write",)
+WRITE_ACTION_SCOPES = frozenset(write_action_scope(action) for action in WRITE_ACTIONS)
 
 if TYPE_CHECKING:
     from ..utils.config import SecurityConfig
@@ -101,7 +105,7 @@ class DorisOAuthScopePolicy:
         self.server_default_scopes = {
             scope
             for scope in self.server_allowed_scopes
-            if not scope.startswith("child:discover:") and ":doris_admin:" not in scope
+            if not scope.startswith("child:discover:") and not any(d in scope for d in (":doris_admin:", ":doris_write:"))
         }
         self.forbidden_scopes = set(FORBIDDEN_DORIS_OAUTH_SCOPES)
         self.known_scopes = (
@@ -112,6 +116,9 @@ class DorisOAuthScopePolicy:
             | {child_call_scope(f) for f in ADMIN_FEATURE_IDS}
             | {child_discovery_scope(f) for f in ADMIN_FEATURE_IDS}
             | set(ADMIN_ACTION_SCOPES)
+            | {child_call_scope(f) for f in WRITE_FEATURE_IDS}
+            | {child_discovery_scope(f) for f in WRITE_FEATURE_IDS}
+            | set(WRITE_ACTION_SCOPES)
             | set(FORBIDDEN_DORIS_OAUTH_SCOPES)
         )
 
@@ -138,7 +145,7 @@ class DorisOAuthScopePolicy:
                     FORMAL_CHILD_FEATURE_IDS,
                 )
             )
-            formal_features = set(FORMAL_CHILD_FEATURE_IDS) | set(ADMIN_FEATURE_IDS)
+            formal_features = set(FORMAL_CHILD_FEATURE_IDS) | set(ADMIN_FEATURE_IDS) | set(WRITE_FEATURE_IDS)
             for feature_id in feature_ids:
                 if feature_id not in formal_features:
                     continue
@@ -151,6 +158,11 @@ class DorisOAuthScopePolicy:
             child = next(c for c, actions in CHILD_ACTIONS.items() if action in actions)
             if child_call_scope(f"doris_admin.{child}") in allowed:
                 allowed.add(action_scope(action))
+        for action in getattr(security_config, "doris_oauth_write_action_allowlist", ()):
+            if action not in WRITE_ACTIONS:
+                raise ValueError("Unknown Doris business write action")
+            if "child:call:doris_write:execute_write" in allowed:
+                allowed.add(write_action_scope(action))
         return allowed
 
     def _configured_feature_ids(

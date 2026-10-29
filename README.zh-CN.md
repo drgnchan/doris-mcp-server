@@ -132,7 +132,9 @@ doris-mcp-server --transport stdio
 
 ## 安全边界
 
-- 1.0 内置目录全部只读；`doris_admin` 只做架构预留，不会注册。
+- 默认 8/55 目录保持只读。[Admin](docs/capabilities/administration.zh-CN.md) 和
+  [业务写入](docs/capabilities/business-writes.zh-CN.md) 默认关闭、独立授权和执行，
+  不自动重试，也不提供跨请求防重。
 - 静态 Token、JWT、外部 OAuth/OIDC 和 Doris 账号驱动的 OAuth 均有独立且
   互相校验的配置边界。
 - 领域发现与 Child 执行使用精确授权标识。

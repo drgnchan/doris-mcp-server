@@ -143,7 +143,11 @@ for grants, row policies, and token-bound examples.
 The original eight domains remain read-only. Optional `doris_admin` is disabled
 by default and uses a separate structured, exactly authorized management sink.
 It executes directly without approval; no existing query sink becomes writable.
-See [administration](../capabilities/administration.md).
+See [administration](../capabilities/administration.md). Optional `doris_write`
+likewise requires explicit action grants and a separate AST-validated sink; it
+does not inherit Admin permissions. Native source/target RBAC remains mandatory.
+Neither domain has durable execution state or automatic retries. See
+[business writes](../capabilities/business-writes.md).
 
 The shared query guard:
 

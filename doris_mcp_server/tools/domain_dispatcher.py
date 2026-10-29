@@ -76,6 +76,7 @@ from .domain_models import (
     ExecutionMetadata,
     StandardError,
 )
+from .write_statements import WriteError
 
 logger = get_logger(__name__)
 
@@ -364,6 +365,10 @@ class DomainDispatcher:
                     from .admin_domain import filtered_child
 
                     child = filtered_child(child, auth_context)
+                elif domain.name == "doris_write":
+                    from .write_domain import filtered_child as filtered_write_child
+
+                    child = filtered_write_child(child, auth_context)
                 annotations = child.annotations
                 tools.append(
                     Tool(
@@ -796,7 +801,7 @@ class DomainDispatcher:
                     "status_code": exc.status_code,
                 },
             )
-        except AdminError as exc:
+        except (AdminError, WriteError) as exc:
             return self._error(
                 domain.name, DomainErrorCode.CHILD_EXECUTION_FAILED, exc.code,
                 child_tool=child.name, manifest_version=manifest.manifest_version,

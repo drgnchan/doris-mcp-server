@@ -82,6 +82,7 @@ class TokenInfo:
     is_active: bool = True
     database_config: DatabaseConfig | None = None  # Optional database binding
     admin_actions: tuple[str, ...] = ()  # Explicit file-only delegation; never implicit
+    write_actions: tuple[str, ...] = ()
 
 
 @dataclass
@@ -361,9 +362,17 @@ class TokenManager:
                 not isinstance(action, str) or action not in ACTION_FIELDS for action in admin_actions
             ):
                 raise ValueError("Static token admin_actions must contain known action names")
+            from ..tools.write_statements import WRITE_ACTIONS
+
+            write_actions = token_config.get("write_actions", [])
+            if not isinstance(write_actions, list) or any(
+                not isinstance(action, str) or action not in WRITE_ACTIONS for action in write_actions
+            ):
+                raise ValueError("Static token write_actions must contain known action names")
             token_info = TokenInfo(
                 token_id=token_id,
                 admin_actions=tuple(dict.fromkeys(admin_actions)),
+                write_actions=tuple(dict.fromkeys(write_actions)),
                 created_at=created_at,
                 expires_at=expires_at,
                 last_used=last_used,
@@ -1013,6 +1022,8 @@ class TokenManager:
 
         if token_info.admin_actions:
             token_config["admin_actions"] = list(token_info.admin_actions)
+        if token_info.write_actions:
+            token_config["write_actions"] = list(token_info.write_actions)
 
         # Add database config if present
         if token_info.database_config:

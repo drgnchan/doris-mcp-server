@@ -60,8 +60,3 @@ class AdminToolHandlersMixin:
         self, arguments: dict[str, Any]
     ) -> dict[str, Any]:
         return await self._run_admin("inspect_access", arguments)
-
-    async def _formal_doris_admin_get_execution_status_tool(
-        self, arguments: dict[str, Any]
-    ) -> dict[str, Any]:
-        return await self._run_admin("get_execution_status", arguments)

@@ -168,9 +168,11 @@ SQL outside the MCP Query runtime. See [MetricFlow integration](../integrations/
 
 ## Reserved and extension surfaces
 
-- `doris_admin` is default-off; explicit enablement adds seven management children
-  (9/62 total), without changing the default 8/55 read-only surface.
+- `doris_admin` is default-off; explicit enablement adds six management children
+  (9/61 total), without changing the default 8/55 read-only surface.
   See [direct access management](administration.md).
+- Default-off `doris_write` adds one business-write child; both extensions give
+  10/62 total. See [business writes](business-writes.md).
 - Custom providers are explicit extensions and not counted in 8/55.
 - MCP resources and prompts remain separate protocol surfaces; they are not
   hidden child tools.
